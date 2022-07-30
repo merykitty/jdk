@@ -4564,7 +4564,7 @@ instruct ReplD_zero(vec dst, immD0 zero) %{
 
 // ====================VECTOR INSERT=======================================
 
-instruct insert(vec dst, rRegI val, immU8 idx) %{
+instruct insert(vec dst, rRegAliasI val, immU8 idx) %{
   predicate(Matcher::vector_length_in_bytes(n) < 32);
   match(Set dst (VectorInsert (Binary dst val) idx));
   format %{ "vector_insert $dst,$val,$idx" %}
@@ -4582,7 +4582,7 @@ instruct insert(vec dst, rRegI val, immU8 idx) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct insert32(vec dst, vec src, rRegI val, immU8 idx, vec vtmp) %{
+instruct insert32(vec dst, vec src, rRegAliasI val, immU8 idx, vec vtmp) %{
   predicate(Matcher::vector_length_in_bytes(n) == 32);
   match(Set dst (VectorInsert (Binary src val) idx));
   effect(TEMP vtmp);
@@ -4605,7 +4605,7 @@ instruct insert32(vec dst, vec src, rRegI val, immU8 idx, vec vtmp) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct insert64(vec dst, vec src, rRegI val, immU8 idx, legVec vtmp) %{
+instruct insert64(vec dst, vec src, rRegAliasI val, immU8 idx, legVec vtmp) %{
   predicate(Matcher::vector_length_in_bytes(n) == 64);
   match(Set dst (VectorInsert (Binary src val) idx));
   effect(TEMP vtmp);
@@ -4630,7 +4630,7 @@ instruct insert64(vec dst, vec src, rRegI val, immU8 idx, legVec vtmp) %{
 %}
 
 #ifdef _LP64
-instruct insert2L(vec dst, rRegL val, immU8 idx) %{
+instruct insert2L(vec dst, rRegAliasL val, immU8 idx) %{
   predicate(Matcher::vector_length(n) == 2);
   match(Set dst (VectorInsert (Binary dst val) idx));
   format %{ "vector_insert $dst,$val,$idx" %}
@@ -4644,7 +4644,7 @@ instruct insert2L(vec dst, rRegL val, immU8 idx) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct insert4L(vec dst, vec src, rRegL val, immU8 idx, vec vtmp) %{
+instruct insert4L(vec dst, vec src, rRegAliasL val, immU8 idx, vec vtmp) %{
   predicate(Matcher::vector_length(n) == 4);
   match(Set dst (VectorInsert (Binary src val) idx));
   effect(TEMP vtmp);
@@ -4663,7 +4663,7 @@ instruct insert4L(vec dst, vec src, rRegL val, immU8 idx, vec vtmp) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct insert8L(vec dst, vec src, rRegL val, immU8 idx, legVec vtmp) %{
+instruct insert8L(vec dst, vec src, rRegAliasL val, immU8 idx, legVec vtmp) %{
   predicate(Matcher::vector_length(n) == 8);
   match(Set dst (VectorInsert (Binary src val) idx));
   effect(TEMP vtmp);
@@ -4939,7 +4939,7 @@ instruct reduction8D(regD dst, legVec src, legVec vtmp1, legVec vtmp2) %{
 // =======================Byte Reduction==========================================
 
 #ifdef _LP64
-instruct reductionB(rRegI dst, rRegI src1, legVec src2, legVec vtmp1, legVec vtmp2) %{
+instruct reductionB(rRegI dst, rRegAliasI src1, legVec src2, legVec vtmp1, legVec vtmp2) %{
   predicate(Matcher::vector_element_basic_type(n->in(2)) == T_BYTE && !VM_Version::supports_avx512bw());
   match(Set dst (AddReductionVI src1 src2));
   match(Set dst (AndReductionV  src1 src2));
@@ -4957,7 +4957,7 @@ instruct reductionB(rRegI dst, rRegI src1, legVec src2, legVec vtmp1, legVec vtm
   ins_pipe( pipe_slow );
 %}
 
-instruct reductionB_avx512bw(rRegI dst, rRegI src1, vec src2, vec vtmp1, vec vtmp2) %{
+instruct reductionB_avx512bw(rRegI dst, rRegAliasI src1, vec src2, vec vtmp1, vec vtmp2) %{
   predicate(Matcher::vector_element_basic_type(n->in(2)) == T_BYTE && VM_Version::supports_avx512bw());
   match(Set dst (AddReductionVI src1 src2));
   match(Set dst (AndReductionV  src1 src2));
@@ -4978,7 +4978,7 @@ instruct reductionB_avx512bw(rRegI dst, rRegI src1, vec src2, vec vtmp1, vec vtm
 
 // =======================Short Reduction==========================================
 
-instruct reductionS(rRegI dst, rRegI src1, legVec src2, legVec vtmp1, legVec vtmp2) %{
+instruct reductionS(rRegI dst, rRegAliasI src1, legVec src2, legVec vtmp1, legVec vtmp2) %{
   predicate(Matcher::vector_element_basic_type(n->in(2)) == T_SHORT); // src2
   match(Set dst (AddReductionVI src1 src2));
   match(Set dst (MulReductionVI src1 src2));
@@ -4999,7 +4999,7 @@ instruct reductionS(rRegI dst, rRegI src1, legVec src2, legVec vtmp1, legVec vtm
 
 // =======================Mul Reduction==========================================
 
-instruct mul_reductionB(rRegI dst, rRegI src1, vec src2, vec vtmp1, vec vtmp2) %{
+instruct mul_reductionB(rRegI dst, rRegAliasI src1, vec src2, vec vtmp1, vec vtmp2) %{
   predicate(Matcher::vector_element_basic_type(n->in(2)) == T_BYTE &&
             Matcher::vector_length(n->in(2)) <= 32); // src2
   match(Set dst (MulReductionVI src1 src2));
@@ -5013,7 +5013,7 @@ instruct mul_reductionB(rRegI dst, rRegI src1, vec src2, vec vtmp1, vec vtmp2) %
   ins_pipe( pipe_slow );
 %}
 
-instruct mul_reduction64B(rRegI dst, rRegI src1, legVec src2, legVec vtmp1, legVec vtmp2) %{
+instruct mul_reduction64B(rRegI dst, rRegAliasI src1, legVec src2, legVec vtmp1, legVec vtmp2) %{
   predicate(Matcher::vector_element_basic_type(n->in(2)) == T_BYTE &&
             Matcher::vector_length(n->in(2)) == 64); // src2
   match(Set dst (MulReductionVI src1 src2));
@@ -6289,7 +6289,7 @@ instruct copySignD_imm(regD dst, regD src, regD tmp1, rRegL tmp2, immD zero) %{
 
 //----------------------------- CompressBits/ExpandBits ------------------------
 
-instruct compressBitsI_reg(rRegI dst, rRegI src, rRegI mask) %{
+instruct compressBitsI_reg(rRegI dst, rRegAliasI src, rRegAliasI mask) %{
   predicate(n->bottom_type()->isa_int());
   match(Set dst (CompressBits src mask));
   format %{ "pextl  $dst, $src, $mask\t! parallel bit extract" %}
@@ -6299,7 +6299,7 @@ instruct compressBitsI_reg(rRegI dst, rRegI src, rRegI mask) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct expandBitsI_reg(rRegI dst, rRegI src, rRegI mask) %{
+instruct expandBitsI_reg(rRegI dst, rRegAliasI src, rRegAliasI mask) %{
   predicate(n->bottom_type()->isa_int());
   match(Set dst (ExpandBits src mask));
   format %{ "pdepl  $dst, $src, $mask\t! parallel bit deposit" %}
@@ -6309,7 +6309,7 @@ instruct expandBitsI_reg(rRegI dst, rRegI src, rRegI mask) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct compressBitsI_mem(rRegI dst, rRegI src, memory mask) %{
+instruct compressBitsI_mem(rRegI dst, rRegAliasI src, memory mask) %{
   predicate(n->bottom_type()->isa_int());
   match(Set dst (CompressBits src (LoadI mask)));
   format %{ "pextl  $dst, $src, $mask\t! parallel bit extract" %}
@@ -6319,7 +6319,7 @@ instruct compressBitsI_mem(rRegI dst, rRegI src, memory mask) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct expandBitsI_mem(rRegI dst, rRegI src, memory mask) %{
+instruct expandBitsI_mem(rRegI dst, rRegAliasI src, memory mask) %{
   predicate(n->bottom_type()->isa_int());
   match(Set dst (ExpandBits src (LoadI mask)));
   format %{ "pdepl  $dst, $src, $mask\t! parallel bit deposit" %}
@@ -10169,7 +10169,7 @@ instruct mask_not_imm(kReg dst, kReg src, immI_M1 cnt) %{
   ins_pipe( pipe_slow );
 %}
 
-instruct long_to_maskLE8_avx(vec dst, rRegL src, rRegL rtmp1, rRegL rtmp2, vec xtmp) %{
+instruct long_to_maskLE8_avx(vec dst, rRegAliasL src, rRegL rtmp1, rRegL rtmp2, vec xtmp) %{
   predicate(n->bottom_type()->isa_vectmask() == NULL && Matcher::vector_length(n) <= 8);
   match(Set dst (VectorLongToMask src));
   effect(TEMP dst, TEMP rtmp1, TEMP rtmp2, TEMP xtmp);
@@ -10184,7 +10184,7 @@ instruct long_to_maskLE8_avx(vec dst, rRegL src, rRegL rtmp1, rRegL rtmp2, vec x
 %}
 
 
-instruct long_to_maskGT8_avx(vec dst, rRegL src, rRegL rtmp1, rRegL rtmp2, vec xtmp1, rFlagsReg cr) %{
+instruct long_to_maskGT8_avx(vec dst, rRegAliasL src, rRegL rtmp1, rRegL rtmp2, vec xtmp1, rFlagsReg cr) %{
   predicate(n->bottom_type()->isa_vectmask() == NULL && Matcher::vector_length(n) > 8);
   match(Set dst (VectorLongToMask src));
   effect(TEMP dst, TEMP rtmp1, TEMP rtmp2, TEMP xtmp1, KILL cr);
@@ -10199,7 +10199,7 @@ instruct long_to_maskGT8_avx(vec dst, rRegL src, rRegL rtmp1, rRegL rtmp2, vec x
   ins_pipe( pipe_slow );
 %}
 
-instruct long_to_mask_evex(kReg dst, rRegL src) %{
+instruct long_to_mask_evex(kReg dst, rRegAliasL src) %{
   predicate(n->bottom_type()->isa_vectmask());
   match(Set dst (VectorLongToMask src));
   format %{ "long_to_mask_evex $dst, $src\t!" %}

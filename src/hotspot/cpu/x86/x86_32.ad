@@ -4535,6 +4535,24 @@ operand cmpOpU_commute() %{
 // multiple operand types with the same basic encoding and format.  The classic
 // case of this is memory operands.
 
+opclass rRegAliasI(rRegI);
+opclass rax_RegAliasI(rax_RegI);
+opclass rcx_RegAliasI(rcx_RegI);
+opclass rdx_RegAliasI(rdx_RegI);
+opclass rbx_RegAliasI(rbx_RegI);
+opclass rdi_RegAliasI(rdi_RegI);
+opclass no_rax_rdx_RegAliasI(no_rax_rdx_RegI);
+opclass no_rbp_r13_RegAliasI(no_rbp_r13_RegI);
+
+opclass rRegAliasL(rRegL);
+opclass rax_RegAliasL(rax_RegL);
+opclass rcx_RegAliasL(rcx_RegL);
+opclass rdx_RegAliasL(rdx_RegL);
+opclass rbx_RegAliasL(rbx_RegL);
+opclass rdi_RegAliasL(rdi_RegL);
+opclass no_rax_rdx_RegAliasL(no_rax_rdx_RegL);
+opclass no_rbp_r13_RegAliasL(no_rbp_r13_RegL);
+
 opclass memory(direct, indirect, indOffset8, indOffset32, indOffset32X, indIndexOffset,
                indIndex, indIndexScale, indIndexScaleOffset);
 
