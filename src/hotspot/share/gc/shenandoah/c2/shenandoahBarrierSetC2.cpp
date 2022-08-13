@@ -696,7 +696,12 @@ Node* ShenandoahBarrierSetC2::atomic_cmpxchg_bool_at_resolved(C2AtomicParseAcces
     }
     access.set_raw_access(load_store);
     pin_atomic_op(access);
-    return load_store;
+
+    Node* bol = kit->gvn().transform(new BoolNode(load_store, BoolTest::eq));
+    Node* res = new CMoveINode(bol, kit->gvn().intcon(0), kit->gvn().intcon(1), TypeInt::BOOL);
+    res = kit->gvn().transform(res);
+
+    return res;
   }
   return BarrierSetC2::atomic_cmpxchg_bool_at_resolved(access, expected_val, new_val, value_type);
 }
