@@ -802,10 +802,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
     __ lock();
     __ cmpxchgptr(newval, addr);
   }
-  if (!exchange) {
-    __ jccb(Assembler::equal, L_success); // fastpath, peeking into Step 5, no need to jump
-  }
-
+  
   // Step 5. If we need a boolean result out of CAS, set the flag appropriately.
   // and promote the result. Note that we handle the flag from both the 1st and 2nd CAS.
   // Otherwise, failure witness for CAE is in oldval on all paths, and we can return.
@@ -814,6 +811,7 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
     __ bind(L_failure);
     __ bind(L_success);
   } else {
+    __ jmpb(L_success); // Not so success but we have ZF set correctly already
     __ bind(L_failure);
     __ orl(tmp1, -1); // Clear ZF
     __ bind(L_success);
