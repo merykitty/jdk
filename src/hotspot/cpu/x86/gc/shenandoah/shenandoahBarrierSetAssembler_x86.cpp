@@ -658,7 +658,7 @@ void ShenandoahBarrierSetAssembler::try_resolve_jobject_in_native(MacroAssembler
 // Special Shenandoah CAS implementation that handles false negatives
 // due to concurrent evacuation.
 void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
-                                                Register res, Address addr, Register oldval, Register newval,
+                                                Address addr, Register oldval, Register newval,
                                                 bool exchange, Register tmp1, Register tmp2) {
   assert(ShenandoahCASBarrier, "Should only be used when CAS barrier is enabled");
   assert(oldval == rax, "must be in rax for implicit use in cmpxchg");
@@ -814,16 +814,9 @@ void ShenandoahBarrierSetAssembler::cmpxchg_oop(MacroAssembler* masm,
     __ bind(L_failure);
     __ bind(L_success);
   } else {
-    assert(res != NULL, "need result register");
-
-    Label exit;
     __ bind(L_failure);
-    __ xorptr(res, res);
-    __ jmpb(exit);
-
+    __ orl(tmp1, -1); // Clear ZF
     __ bind(L_success);
-    __ movptr(res, 1);
-    __ bind(exit);
   }
 }
 
