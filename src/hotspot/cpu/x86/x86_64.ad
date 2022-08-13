@@ -8068,136 +8068,100 @@ instruct castDD(regD dst)
   ins_pipe(empty);
 %}
 
-// XXX No flag versions for CompareAndSwap{P,I,L} because matcher can't match them
-instruct compareAndSwapP(rRegI res,
+instruct compareAndSwapP(rFlagsReg cr,
                          memory mem_ptr,
-                         rax_RegP oldval, rRegP newval,
-                         rFlagsReg cr)
+                         rax_RegP oldval, rRegP newval)
 %{
   predicate(VM_Version::supports_cx8() && n->as_LoadStore()->barrier_data() == 0);
-  match(Set res (CompareAndSwapP mem_ptr (Binary oldval newval)));
-  match(Set res (WeakCompareAndSwapP mem_ptr (Binary oldval newval)));
-  effect(KILL cr, KILL oldval);
+  match(Set cr (CompareAndSwapP mem_ptr (Binary oldval newval)));
+  match(Set cr (WeakCompareAndSwapP mem_ptr (Binary oldval newval)));
+  effect(KILL oldval);
 
-  format %{ "cmpxchgq $mem_ptr,$newval\t# "
-            "If rax == $mem_ptr then store $newval into $mem_ptr\n\t"
-            "sete    $res\n\t"
-            "movzbl  $res, $res" %}
+  format %{ "cmpxchgq_lock   $mem_ptr, $newval" %}
   ins_encode %{
     __ lock();
     __ cmpxchgq($newval$$Register, $mem_ptr$$Address);
-    __ sete($res$$Register);
-    __ movzbl($res$$Register, $res$$Register);
   %}
   ins_pipe( pipe_cmpxchg );
 %}
 
-instruct compareAndSwapL(rRegI res,
+instruct compareAndSwapL(rFlagsReg cr,
                          memory mem_ptr,
-                         rax_RegL oldval, rRegL newval,
-                         rFlagsReg cr)
+                         rax_RegL oldval, rRegL newval)
 %{
   predicate(VM_Version::supports_cx8());
-  match(Set res (CompareAndSwapL mem_ptr (Binary oldval newval)));
-  match(Set res (WeakCompareAndSwapL mem_ptr (Binary oldval newval)));
-  effect(KILL cr, KILL oldval);
+  match(Set cr (CompareAndSwapL mem_ptr (Binary oldval newval)));
+  match(Set cr (WeakCompareAndSwapL mem_ptr (Binary oldval newval)));
+  effect(KILL oldval);
 
-  format %{ "cmpxchgq $mem_ptr,$newval\t# "
-            "If rax == $mem_ptr then store $newval into $mem_ptr\n\t"
-            "sete    $res\n\t"
-            "movzbl  $res, $res" %}
+  format %{ "cmpxchgq_lock   $mem_ptr, $newval" %}
   ins_encode %{
     __ lock();
     __ cmpxchgq($newval$$Register, $mem_ptr$$Address);
-    __ sete($res$$Register);
-    __ movzbl($res$$Register, $res$$Register);
   %}
   ins_pipe( pipe_cmpxchg );
 %}
 
-instruct compareAndSwapI(rRegI res,
+instruct compareAndSwapI(rFlagsReg cr,
                          memory mem_ptr,
-                         rax_RegI oldval, rRegI newval,
-                         rFlagsReg cr)
+                         rax_RegI oldval, rRegI newval)
 %{
-  match(Set res (CompareAndSwapI mem_ptr (Binary oldval newval)));
-  match(Set res (WeakCompareAndSwapI mem_ptr (Binary oldval newval)));
-  effect(KILL cr, KILL oldval);
+  match(Set cr (CompareAndSwapI mem_ptr (Binary oldval newval)));
+  match(Set cr (WeakCompareAndSwapI mem_ptr (Binary oldval newval)));
+  effect(KILL cr);
 
-  format %{ "cmpxchgl $mem_ptr,$newval\t# "
-            "If rax == $mem_ptr then store $newval into $mem_ptr\n\t"
-            "sete    $res\n\t"
-            "movzbl  $res, $res" %}
+  format %{ "cmpxchgl_lock   $mem_ptr, $newval" %}
   ins_encode %{
     __ lock();
     __ cmpxchgl($newval$$Register, $mem_ptr$$Address);
-    __ sete($res$$Register);
-    __ movzbl($res$$Register, $res$$Register);
   %}
   ins_pipe( pipe_cmpxchg );
 %}
 
-instruct compareAndSwapB(rRegI res,
+instruct compareAndSwapB(rFlagsReg cr,
                          memory mem_ptr,
-                         rax_RegI oldval, rRegI newval,
-                         rFlagsReg cr)
+                         rax_RegI oldval, rRegI newval)
 %{
-  match(Set res (CompareAndSwapB mem_ptr (Binary oldval newval)));
-  match(Set res (WeakCompareAndSwapB mem_ptr (Binary oldval newval)));
-  effect(KILL cr, KILL oldval);
+  match(Set cr (CompareAndSwapB mem_ptr (Binary oldval newval)));
+  match(Set cr (WeakCompareAndSwapB mem_ptr (Binary oldval newval)));
+  effect(KILL oldval);
 
-  format %{ "cmpxchgb $mem_ptr,$newval\t# "
-            "If rax == $mem_ptr then store $newval into $mem_ptr\n\t"
-            "sete    $res\n\t"
-            "movzbl  $res, $res" %}
+  format %{ "cmpxchgb_lock   $mem_ptr, $newval" %}
   ins_encode %{
     __ lock();
     __ cmpxchgb($newval$$Register, $mem_ptr$$Address);
-    __ sete($res$$Register);
-    __ movzbl($res$$Register, $res$$Register);
   %}
   ins_pipe( pipe_cmpxchg );
 %}
 
-instruct compareAndSwapS(rRegI res,
+instruct compareAndSwapS(rFlagsReg cr,
                          memory mem_ptr,
-                         rax_RegI oldval, rRegI newval,
-                         rFlagsReg cr)
+                         rax_RegI oldval, rRegI newval)
 %{
-  match(Set res (CompareAndSwapS mem_ptr (Binary oldval newval)));
-  match(Set res (WeakCompareAndSwapS mem_ptr (Binary oldval newval)));
-  effect(KILL cr, KILL oldval);
+  match(Set cr (CompareAndSwapS mem_ptr (Binary oldval newval)));
+  match(Set cr (WeakCompareAndSwapS mem_ptr (Binary oldval newval)));
+  effect(KILL oldval);
 
-  format %{ "cmpxchgw $mem_ptr,$newval\t# "
-            "If rax == $mem_ptr then store $newval into $mem_ptr\n\t"
-            "sete    $res\n\t"
-            "movzbl  $res, $res" %}
+  format %{ "cmpxchgw_lock   $mem_ptr, $newval" %}
   ins_encode %{
     __ lock();
     __ cmpxchgw($newval$$Register, $mem_ptr$$Address);
-    __ sete($res$$Register);
-    __ movzbl($res$$Register, $res$$Register);
   %}
   ins_pipe( pipe_cmpxchg );
 %}
 
-instruct compareAndSwapN(rRegI res,
-                          memory mem_ptr,
-                          rax_RegN oldval, rRegN newval,
-                          rFlagsReg cr) %{
-  match(Set res (CompareAndSwapN mem_ptr (Binary oldval newval)));
-  match(Set res (WeakCompareAndSwapN mem_ptr (Binary oldval newval)));
-  effect(KILL cr, KILL oldval);
+instruct compareAndSwapN(rFlagsReg cr,
+                         memory mem_ptr,
+                         rax_RegN oldval, rRegN newval)
+%{
+  match(Set cr (CompareAndSwapN mem_ptr (Binary oldval newval)));
+  match(Set cr (WeakCompareAndSwapN mem_ptr (Binary oldval newval)));
+  effect(KILL oldval);
 
-  format %{ "cmpxchgl $mem_ptr,$newval\t# "
-            "If rax == $mem_ptr then store $newval into $mem_ptr\n\t"
-            "sete    $res\n\t"
-            "movzbl  $res, $res" %}
+  format %{ "cmpxchgl_lock   $mem_ptr, $newval" %}
   ins_encode %{
     __ lock();
     __ cmpxchgl($newval$$Register, $mem_ptr$$Address);
-    __ sete($res$$Register);
-    __ movzbl($res$$Register, $res$$Register);
   %}
   ins_pipe( pipe_cmpxchg );
 %}

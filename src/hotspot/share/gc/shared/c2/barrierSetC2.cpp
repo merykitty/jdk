@@ -30,6 +30,7 @@
 #include "opto/graphKit.hpp"
 #include "opto/idealKit.hpp"
 #include "opto/macro.hpp"
+#include "opto/movenode.hpp"
 #include "opto/narrowptrnode.hpp"
 #include "opto/runtime.hpp"
 #include "utilities/macros.hpp"
@@ -537,7 +538,11 @@ Node* BarrierSetC2::atomic_cmpxchg_bool_at_resolved(C2AtomicParseAccess& access,
   access.set_raw_access(load_store);
   pin_atomic_op(access);
 
-  return load_store;
+  Node* bol = kit->gvn().transform(new BoolNode(load_store, BoolTest::eq));
+  Node* res = new CMoveINode(bol, kit->gvn().intcon(0), kit->gvn().intcon(1), TypeInt::BOOL);
+  res = kit->gvn().transform(res);
+
+  return res;
 }
 
 Node* BarrierSetC2::atomic_xchg_at_resolved(C2AtomicParseAccess& access, Node* new_val, const Type* value_type) const {

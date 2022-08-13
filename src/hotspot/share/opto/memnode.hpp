@@ -849,6 +849,7 @@ public:
     ExpectedIn = MemNode::ValueIn+1 // One more input than MemNode
   };
   LoadStoreConditionalNode(Node *c, Node *mem, Node *adr, Node *val, Node *ex);
+  virtual uint ideal_reg() const { return Op_RegFlags; }
   virtual const Type* Value(PhaseGVN* phase) const;
 };
 
