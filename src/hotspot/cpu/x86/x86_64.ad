@@ -8108,7 +8108,7 @@ instruct compareAndSwapI(rFlagsReg cr,
 %{
   match(Set cr (CompareAndSwapI mem_ptr (Binary oldval newval)));
   match(Set cr (WeakCompareAndSwapI mem_ptr (Binary oldval newval)));
-  effect(KILL cr);
+  effect(KILL oldval);
 
   format %{ "cmpxchgl_lock   $mem_ptr, $newval" %}
   ins_encode %{
