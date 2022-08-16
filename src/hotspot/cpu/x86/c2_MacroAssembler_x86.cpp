@@ -4648,8 +4648,8 @@ void C2_MacroAssembler::vector_mask_cast(XMMRegister dst, XMMRegister src,
   }
 }
 
-void C2_MacroAssembler::vector_mask_cast_with_tmp(XMMRegister dst, XMMRegister src, XMMRegister xtmp1, XMMRegister xtmp2,
-                                                  BasicType dst_bt, BasicType src_bt, int vlen) {
+void C2_MacroAssembler::vector_mask_cast_with_tmp(XMMRegister dst, XMMRegister src, XMMRegister xtmp1,
+                                                  XMMRegister xtmp2, BasicType dst_bt, BasicType src_bt, int vlen) {
   int dst_bt_size = type2aelembytes(dst_bt);
   int src_bt_size = type2aelembytes(src_bt);
   if (dst_bt_size > src_bt_size) {
