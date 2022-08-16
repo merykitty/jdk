@@ -4691,7 +4691,7 @@ void C2_MacroAssembler::vector_mask_cast_with_tmp(XMMRegister dst, XMMRegister s
         vpermilps(dst, src, 0x08, AVX_256bit);
         vpermpd(dst, dst, 0x08, AVX_256bit);
         vpackssdw(dst, dst, dst, AVX_128bit);
-        vpackssdw(dst, dst, dst, AVX_128bit);
+        vpacksswb(dst, dst, dst, AVX_128bit);
         break;
       default: ShouldNotReachHere();
     }
