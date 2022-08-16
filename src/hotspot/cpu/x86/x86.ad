@@ -1480,6 +1480,7 @@ const bool Matcher::match_rule_supported(int opcode) {
     case Op_VectorUCastB2X:
     case Op_VectorUCastS2X:
     case Op_VectorUCastI2X:
+    case Op_VectorMaskCast:
       if (UseAVX < 1) { // enabled for AVX only
         return false;
       }
