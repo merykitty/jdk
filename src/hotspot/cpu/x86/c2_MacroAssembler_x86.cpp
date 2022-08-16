@@ -4648,42 +4648,43 @@ void C2_MacroAssembler::vector_mask_cast(XMMRegister dst, XMMRegister src,
   }
 }
 
-void C2_MacroAssembler::vector_mask_cast_with_tmp(XMMRegister dst, XMMRegister src, XMMRegister xtmp,
+void C2_MacroAssembler::vector_mask_cast_with_tmp(XMMRegister dst, XMMRegister src, XMMRegister xtmp1, XMMRegister xtmp2,
                                                   BasicType dst_bt, BasicType src_bt, int vlen) {
   int dst_bt_size = type2aelembytes(dst_bt);
   int src_bt_size = type2aelembytes(src_bt);
   if (dst_bt_size > src_bt_size) {
     switch (dst_bt_size / src_bt_size) {
       case 2:
-        vpmovsxbw(xtmp, src, AVX_128bit);
-        vpshufd(dst, src, 0x0E, AVX_128bit);
-        vpmovsxbw(dst, dst, AVX_128bit);
-        vinsertf128(dst, xtmp, dst, 0x01);
+        vpmovsxbw(xtmp1, src, AVX_128bit);
+        vpshufd(xtmp2, src, 0x0E, AVX_128bit);
+        vpmovsxbw(xtmp2, xtmp2, AVX_128bit);
+        vinsertf128(dst, xtmp1, xtmp2, 0x01);
         break;
       case 4:
-        vpmovsxbd(xtmp, src, AVX_128bit);
-        vpshufd(dst, src, 0x01, AVX_128bit);
-        vpmovsxbd(dst, dst, AVX_128bit);
-        vinsertf128(dst, xtmp, dst, 0x01);
+        vpmovsxbd(xtmp1, src, AVX_128bit);
+        vpshufd(xtmp2, src, 0x01, AVX_128bit);
+        vpmovsxbd(xtmp2, xtmp2, AVX_128bit);
+        vinsertf128(dst, xtmp1, xtmp2, 0x01);
         break;
       case 8:
-        vpmovsxbq(xtmp, src, AVX_128bit);
-        pshuflw(dst, src, 0x01);
-        vpmovsxbq(dst, dst, AVX_128bit);
-        vinsertf128(dst, xtmp, dst, 0x01);
+        vpmovsxbq(xtmp1, src, AVX_128bit);
+        pshuflw(xtmp2, src, 0x01);
+        vpmovsxbq(xtmp2, xtmp2, AVX_128bit);
+        vinsertf128(dst, xtmp1, xtmp2, 0x01);
         break;
       default: ShouldNotReachHere();
     }
   } else {
     assert(dst_bt_size < src_bt_size, "");
+    assert(xtmp2 == xnoreg, "");
     switch (src_bt_size / dst_bt_size) {
       case 2:
-        vextractf128(xtmp, src, 0x01);
-        vpacksswb(dst, src, xtmp, AVX_128bit);
+        vextractf128(xtmp1, src, 0x01);
+        vpacksswb(dst, src, xtmp1, AVX_128bit);
         break;
       case 4:
-        vextractf128(xtmp, src, 0x01);
-        vpackssdw(dst, src, xtmp, AVX_128bit);
+        vextractf128(xtmp1, src, 0x01);
+        vpackssdw(dst, src, xtmp1, AVX_128bit);
         vpacksswb(dst, dst, dst, AVX_128bit);
         break;
       case 8:
