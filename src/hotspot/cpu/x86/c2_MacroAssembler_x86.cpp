@@ -65,12 +65,18 @@ void C2_MacroAssembler::verified_entry(int framesize, int stack_bang_size, bool 
   // some VM calls (such as call site linkage) can use several kilobytes of
   // stack.  But the stack safety zone should account for that.
   // See bugs 4446381, 4468289, 4497237.
-  if (stack_bang_size > 0) {
-    generate_stack_overflow_check(stack_bang_size);
-
+  if (LP64_ONLY(true) NOT_LP64(stack_bang_size > 0)) {
     // We always push rbp, so that on return to interpreter rbp, will be
     // restored correctly and we can correct the stack.
-    push(rbp);
+    if (stack_bang_size > 0) {
+      generate_stack_overflow_check(stack_bang_size);
+      push(rbp);
+    } else {
+      // addr32 addr32 REX.W push rbp
+      emit_int32(0x67, 0x67, 0x48, 0xFF);
+      emit_int8(0xF5);
+    }
+
     // Save caller's stack pointer into RBP if the frame pointer is preserved.
     if (PreserveFramePointer) {
       mov(rbp, rsp);
