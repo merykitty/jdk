@@ -465,7 +465,8 @@ public final class ThreadLocalRandom extends Random {
      */
     @Override
     public int nextInt(int bound) {
-        return super.nextInt(bound);
+        RandomSupport.checkBound(bound);
+        return RandomSupport.boundedNextInt(this, bound);
     }
 
     /**
@@ -474,7 +475,8 @@ public final class ThreadLocalRandom extends Random {
      */
     @Override
     public int nextInt(int origin, int bound) {
-        return super.nextInt(origin, bound);
+        RandomSupport.checkRange(origin, bound);
+        return RandomSupport.boundedNextInt(this, origin, bound);
     }
 
     /**
@@ -491,7 +493,8 @@ public final class ThreadLocalRandom extends Random {
      */
     @Override
     public long nextLong(long bound) {
-        return super.nextLong(bound);
+        RandomSupport.checkBound(bound);
+        return RandomSupport.boundedNextLong(this, bound);
     }
 
     /**
@@ -500,7 +503,8 @@ public final class ThreadLocalRandom extends Random {
      */
     @Override
     public long nextLong(long origin, long bound) {
-        return super.nextLong(origin, bound);
+        RandomSupport.checkRange(origin, bound);
+        return RandomSupport.boundedNextLong(this, origin, bound);
     }
 
     /**

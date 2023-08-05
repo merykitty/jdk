@@ -413,33 +413,21 @@ public class RandomSupport {
      */
     public static long boundedNextLong(RandomGenerator rng, long origin, long bound) {
         long r = rng.nextLong();
-        if (origin < bound) {
-            // It's not case (1).
-            final long n = bound - origin;
-            final long m = n - 1;
-            if ((n & m) == 0L) {
-                // It is case (2): length of range is a power of 2.
-                r = (r & m) + origin;
-            } else if (n > 0L) {
-                // It is case (3): need to reject over-represented candidates.
-                /* This loop takes an unlovable form (but it works):
-                   because the first candidate is already available,
-                   we need a break-in-the-middle construction,
-                   which is concisely but cryptically performed
-                   within the while-condition of a body-less for loop. */
-                for (long u = r >>> 1;            // ensure nonnegative
-                     u + m - (r = u % n) < 0L;    // rejection check
-                     u = rng.nextLong() >>> 1) // retry
-                    ;
-                r += origin;
-            }
-            else {
-                // It is case (4): length of range not representable as long.
-                while (r < origin || r >= bound)
-                    r = rng.nextLong();
+        if (origin >= bound) {
+            return r;
+        }
+
+        long range = bound - origin;
+        long remainder = r * range;
+        if (Long.compareUnsigned(remainder, range) < 0) {
+            long threshold = range < 0 ? (-range) &~ Long.MIN_VALUE
+                    : Long.remainderUnsigned(-range, range);
+            while (Long.compareUnsigned(remainder, threshold) < 0) {
+                r = rng.nextLong();
+                remainder = r * range;
             }
         }
-        return r;
+        return Math.unsignedMultiplyHigh(r, range);
     }
 
     /**
@@ -487,25 +475,7 @@ public class RandomSupport {
      * @return a pseudorandomly chosen {@code long} value
      */
     public static long boundedNextLong(RandomGenerator rng, long bound) {
-        // Specialize boundedNextLong for origin == 0, bound > 0
-        final long m = bound - 1;
-        long r = rng.nextLong();
-        if ((bound & m) == 0L) {
-            // The bound is a power of 2.
-            r &= m;
-        } else {
-            // Must reject over-represented candidates
-            /* This loop takes an unlovable form (but it works):
-               because the first candidate is already available,
-               we need a break-in-the-middle construction,
-               which is concisely but cryptically performed
-               within the while-condition of a body-less for loop. */
-            for (long u = r >>> 1;
-                 u + m - (r = u % bound) < 0L;
-                 u = rng.nextLong() >>> 1)
-                ;
-        }
-        return r;
+        return boundedNextLong(rng, 0, bound);
     }
 
     /**
@@ -540,29 +510,21 @@ public class RandomSupport {
      */
     public static int boundedNextInt(RandomGenerator rng, int origin, int bound) {
         int r = rng.nextInt();
-        if (origin < bound) {
-            // It's not case (1).
-            final int n = bound - origin;
-            final int m = n - 1;
-            if ((n & m) == 0) {
-                // It is case (2): length of range is a power of 2.
-                r = (r & m) + origin;
-            } else if (n > 0) {
-                // It is case (3): need to reject over-represented candidates.
-                for (int u = r >>> 1;
-                     u + m - (r = u % n) < 0;
-                     u = rng.nextInt() >>> 1)
-                    ;
-                r += origin;
-            }
-            else {
-                // It is case (4): length of range not representable as long.
-                while (r < origin || r >= bound) {
-                    r = rng.nextInt();
-                }
+        if (origin >= bound) {
+            return r;
+        }
+
+        int range = bound - origin;
+        long mulRes = Integer.toUnsignedLong(range) * Integer.toUnsignedLong(r);
+        if (Integer.compareUnsigned((int)mulRes, range) < 0) {
+            int threshold = range < 0 ? (-range) &~ Integer.MIN_VALUE
+                    : Integer.remainderUnsigned(-range, range);
+            while (Integer.compareUnsigned((int)mulRes, threshold) < 0) {
+                r = rng.nextInt();
+                mulRes = Integer.toUnsignedLong(range) * Integer.toUnsignedLong(r);
             }
         }
-        return r;
+        return (int)(mulRes >> Integer.SIZE);
     }
 
     /**
@@ -587,20 +549,7 @@ public class RandomSupport {
      *           {@code nextLong()} method.
      */
     public static int boundedNextInt(RandomGenerator rng, int bound) {
-        // Specialize boundedNextInt for origin == 0, bound > 0
-        final int m = bound - 1;
-        int r = rng.nextInt();
-        if ((bound & m) == 0) {
-            // The bound is a power of 2.
-            r &= m;
-        } else {
-            // Must reject over-represented candidates
-            for (int u = r >>> 1;
-                 u + m - (r = u % bound) < 0;
-                 u = rng.nextInt() >>> 1)
-                ;
-        }
-        return r;
+        return boundedNextInt(rng, 0, bound);
     }
 
     /**
