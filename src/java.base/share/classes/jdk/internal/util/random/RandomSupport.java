@@ -344,6 +344,72 @@ public class RandomSupport {
      */
 
     /**
+     * Lemma:
+     * <p>Note: All formulas in the lemma are in the field of real numbers.
+     *
+     * <p>Given s being the integer such that 0 <= s < bound, s and 2**64 are
+     * congruent modulo bound. This implies that (2**64 - s) = k.bound with
+     * k being an integer.
+     *
+     * <p>Consider the function f(x) = (x.bound) / 2**64 with x being a 64-bit
+     * integer variable such that (x.bound) = 2**64.q + r with q, r being
+     * integers satisfying s <= r < 2**64.
+     *
+     * <p>It can be seen that for each value y = f(x),
+     * <p>y.2**64 + s <= x.bound < (y + 1).2**64
+     * <p>(1): x >= (y.2**64) / bound + s / bound
+     * <p>(2): x < (y.2**64) / bound + 2**64 / bound
+     *
+     * <p>As 2**64 / bound - s / bound = (2**64 - s) / bound = k being an integer,
+     * There exists exactly k values of x such that f(x) = y.
+     *
+     * <p>This lemma gives us the basis to transform a uniform distribution of
+     * integers in [0, 2**64) to a uniform distribution of integers in [0, bound) by
+     * rejecting all inputs such that (x * bound) % 2**64 < s, the output would be
+     * (x * bound) / 2**64.
+     *
+     * <p>Note that 0 <= s < bound, we compare r with bound first, avoiding performing
+     * an expensive remainder operation in the majority of the cases.
+     *
+     * <p>This function will throw if bound == 0.
+     */
+    private static long boundedNextLongHelper(RandomGenerator rng, long bound) {
+        long x = rng.nextLong();
+        long r = x * bound;
+        if (Long.compareUnsigned(r, bound) < 0) {
+            long s = bound < 0 ? (-bound) &~ Long.MIN_VALUE
+                    : Long.remainderUnsigned(-bound, bound);
+            while (Long.compareUnsigned(r, s) < 0) {
+                x = rng.nextLong();
+                r = x * bound;
+            }
+        }
+        return Math.unsignedMultiplyHigh(x, bound);
+    }
+
+    /**
+     * Similar to {@link #boundedNextLongHelper(RandomGenerator, long)}.
+     *
+     * <p>This function will throw if bound == 0.
+     */
+    private static int boundedNextIntHelper(RandomGenerator rng, int bound) {
+        long x = Integer.toUnsignedLong(rng.nextInt());
+        long boundLong = Integer.toUnsignedLong(bound);
+        long prod = x * boundLong;
+        int r = (int)prod;
+        if (Integer.compareUnsigned(r, bound) < 0) {
+            int s = bound < 0 ? (-bound) &~ Integer.MIN_VALUE
+                    : Integer.remainderUnsigned(-bound, bound);
+            while (Integer.compareUnsigned(r, s) < 0) {
+                x = Integer.toUnsignedLong(rng.nextInt());
+                prod = x * boundLong;
+                r = (int)prod;
+            }
+        }
+        return (int)(prod >>> Integer.SIZE);
+    }
+
+    /**
      * This is the form of {@link RandomGenerator#nextLong() nextLong}() used by
      * a {@link LongStream} {@link Spliterator} and by the public method
      * {@link RandomGenerator#nextLong(long, long) nextLong}(origin, bound). If
@@ -363,41 +429,8 @@ public class RandomSupport {
      * possible long values is equally likely to be chosen).
      * Under some circumstances (when the specified range is not
      * a power of 2), {@code nextLong()} may be called additional times
-     * to ensure that that the values in the specified range are
+     * to ensure that the values in the specified range are
      * equally likely to be chosen (provided the assumption holds).
-     *
-     * The implementation considers four cases:
-     * <ol>
-     *
-     * <li> If the {@code} bound} is less than or equal to the {@code origin}
-     * (indicated an unbounded form), the 64-bit {@code long} value obtained
-     * from {@link RandomGenerator#nextLong() nextLong}() is returned directly.
-     * </li>
-     *
-     * <li> Otherwise, if the length <i>n</i> of the specified range is an
-     * exact power of two 2<sup><i>m</i></sup> for some integer
-     *      <i>m</i>, then return the sum of {@code origin} and the
-     *      <i>m</i> lowest-order bits of the value from {@code nextLong()}.
-     * </li>
-     *
-     * <li> Otherwise, if the length <i>n</i> of the specified range
-     * is less than 2<sup>63</sup>, then the basic idea is to use the remainder
-     * modulo <i>n</i> of the value from
-     * {@link RandomGenerator#nextLong() nextLong}(), but with this approach
-     * some values will be over-represented. Therefore a loop is used to avoid
-     * potential bias by rejecting candidates that are too large. Assuming that
-     * the results from {@link RandomGenerator#nextLong() nextLong}() are truly
-     * chosen uniformly and independently, the expected number of iterations
-     * will be somewhere between 1 and 2, depending on the precise value of
-     * <i>n</i>.</li>
-     *
-     * <li> Otherwise, the length <i>n</i> of the specified range
-     * cannot be represented as a positive {@code long} value. A loop repeatedly
-     * calls {@link RandomGenerator#nextLong() nextLong}() until obtaining a
-     * suitable candidate, Again, the expected number of iterations is less than
-     * 2.</li>
-     *
-     * </ol>
      *
      * @param rng a random number generator to be used as a
      *        source of pseudorandom {@code long} values
@@ -412,22 +445,7 @@ public class RandomSupport {
      *         is greater than or equal to {@code bound}
      */
     public static long boundedNextLong(RandomGenerator rng, long origin, long bound) {
-        long r = rng.nextLong();
-        if (origin >= bound) {
-            return r;
-        }
-
-        long range = bound - origin;
-        long remainder = r * range;
-        if (Long.compareUnsigned(remainder, range) < 0) {
-            long threshold = range < 0 ? (-range) &~ Long.MIN_VALUE
-                    : Long.remainderUnsigned(-range, range);
-            while (Long.compareUnsigned(remainder, threshold) < 0) {
-                r = rng.nextLong();
-                remainder = r * range;
-            }
-        }
-        return Math.unsignedMultiplyHigh(r, range);
+        return bound > origin ? boundedNextLongHelper(rng, bound - origin) + origin : rng.nextLong();
     }
 
     /**
@@ -446,27 +464,8 @@ public class RandomSupport {
      * possible long values is equally likely to be chosen).
      * Under some circumstances (when the specified range is not
      * a power of 2), {@code nextLong()} may be called additional times
-     * to ensure that that the values in the specified range are
+     * to ensure that the values in the specified range are
      * equally likely to be chosen (provided the assumption holds).
-     *
-     * The implementation considers two cases:
-     * <ol>
-     *
-     * <li> If {@code bound} is an exact power of two 2<sup><i>m</i></sup>
-     * for some integer <i>m</i>, then return the sum of {@code origin} and the
-     * <i>m</i> lowest-order bits of the value from
-     * {@link RandomGenerator#nextLong() nextLong}().</li>
-     *
-     * <li> Otherwise, the basic idea is to use the remainder modulo
-     *      <i>bound</i> of the value from {@code nextLong()},
-     * but with this approach some values will be over-represented. Therefore a
-     * loop is used to avoid potential bias by rejecting candidates that vare
-     * too large. Assuming that the results from
-     * {@link RandomGenerator#nextLong() nextLong}() are truly chosen uniformly
-     * and independently, the expected number of iterations will be somewhere
-     * between 1 and 2, depending on the precise value of <i>bound</i>.</li>
-     *
-     * </ol>
      *
      * @param rng a random number generator to be used as a
      *        source of pseudorandom {@code long} values
@@ -475,7 +474,7 @@ public class RandomSupport {
      * @return a pseudorandomly chosen {@code long} value
      */
     public static long boundedNextLong(RandomGenerator rng, long bound) {
-        return boundedNextLong(rng, 0, bound);
+        return bound > 0 ? boundedNextLongHelper(rng, bound) : rng.nextLong();
     }
 
     /**
@@ -509,22 +508,7 @@ public class RandomSupport {
      *           {@code nextLong()} method.
      */
     public static int boundedNextInt(RandomGenerator rng, int origin, int bound) {
-        int r = rng.nextInt();
-        if (origin >= bound) {
-            return r;
-        }
-
-        int range = bound - origin;
-        long mulRes = Integer.toUnsignedLong(range) * Integer.toUnsignedLong(r);
-        if (Integer.compareUnsigned((int)mulRes, range) < 0) {
-            int threshold = range < 0 ? (-range) &~ Integer.MIN_VALUE
-                    : Integer.remainderUnsigned(-range, range);
-            while (Integer.compareUnsigned((int)mulRes, threshold) < 0) {
-                r = rng.nextInt();
-                mulRes = Integer.toUnsignedLong(range) * Integer.toUnsignedLong(r);
-            }
-        }
-        return (int)(mulRes >> Integer.SIZE);
+        return bound > origin ? boundedNextIntHelper(rng, bound - origin) + origin : rng.nextInt();
     }
 
     /**
@@ -549,7 +533,7 @@ public class RandomSupport {
      *           {@code nextLong()} method.
      */
     public static int boundedNextInt(RandomGenerator rng, int bound) {
-        return boundedNextInt(rng, 0, bound);
+        return bound > 0 ? boundedNextIntHelper(rng, bound) : rng.nextInt();
     }
 
     /**
