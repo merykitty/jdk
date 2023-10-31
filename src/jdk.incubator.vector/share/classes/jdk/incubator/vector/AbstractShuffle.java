@@ -50,6 +50,7 @@ abstract class AbstractShuffle<E> extends VectorShuffle<E> {
     /*package-private*/
     abstract AbstractVector<?> toBitsVector();
 
+    @ForceInline
     final AbstractVector<?> toBitsVectorTemplate() {
         AbstractSpecies<?> dsp = vspecies().asIntegral();
         Class<?> etype = dsp.elementType();
