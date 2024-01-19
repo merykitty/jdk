@@ -306,7 +306,7 @@ source %{
     }
   }
 
-  const bool Matcher::vector_needs_load_shuffle(BasicType elem_bt, int vlen) {
+  bool Matcher::vector_needs_load_shuffle(BasicType elem_bt, int vlen) {
     return false;
   }
 
