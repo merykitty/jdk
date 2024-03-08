@@ -32,6 +32,7 @@
 #include "opto/cfgnode.hpp"
 #include "opto/machnode.hpp"
 #include "opto/opcodes.hpp"
+#include "opto/phaselcm.hpp"
 #include "opto/phaseX.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
@@ -1549,18 +1550,6 @@ void PhaseCFG::global_code_motion() {
     }
   }
 
-  bool block_size_threshold_ok = false;
-  intptr_t *recalc_pressure_nodes = nullptr;
-  if (OptoRegScheduling) {
-    for (uint i = 0; i < number_of_blocks(); i++) {
-      Block* block = get_block(i);
-      if (block->number_of_nodes() > 10) {
-        block_size_threshold_ok = true;
-        break;
-      }
-    }
-  }
-
   // Enabling the scheduler for register pressure plus finding blocks of size to schedule for it
   // is key to enabling this feature.
   PhaseChaitin regalloc(C->unique(), *this, _matcher, true);
@@ -1568,7 +1557,7 @@ void PhaseCFG::global_code_motion() {
   ResourceMark rm_live(&live_arena);
   PhaseLive live(*this, regalloc._lrg_map.names(), &live_arena, true);
   PhaseIFG ifg(&live_arena);
-  if (OptoRegScheduling && block_size_threshold_ok) {
+  if (OptoRegScheduling) {
     regalloc.mark_ssa();
     Compile::TracePhase tp("computeLive", &timers[_t_computeLive]);
     rm_live.reset_to_mark();           // Reclaim working storage
@@ -1579,11 +1568,6 @@ void PhaseCFG::global_code_motion() {
     regalloc.set_live(live);
     regalloc.gather_lrg_masks(false);    // Collect LRG masks
     live.compute(node_size); // Compute liveness
-
-    recalc_pressure_nodes = NEW_RESOURCE_ARRAY(intptr_t, node_size);
-    for (uint i = 0; i < node_size; i++) {
-      recalc_pressure_nodes[i] = 0;
-    }
   }
   _regalloc = &regalloc;
 
@@ -1593,22 +1577,10 @@ void PhaseCFG::global_code_motion() {
   }
 #endif
 
-  // Schedule locally.  Right now a simple topological sort.
-  // Later, do a real latency aware scheduler.
-  GrowableArray<int> ready_cnt(C->unique(), C->unique(), -1);
-  visited.reset();
-  for (uint i = 0; i < number_of_blocks(); i++) {
-    Block* block = get_block(i);
-    if (!schedule_local(block, ready_cnt, visited, recalc_pressure_nodes)) {
-      if (!C->failure_reason_is(C2Compiler::retry_no_subsuming_loads())) {
-        assert(false, "local schedule failed");
-        C->record_method_not_compilable("local schedule failed");
-      }
-      _regalloc = nullptr;
-      return;
-    }
+  PhaseLCM lcm(*this, regalloc);
+  for (size_t i = 0; i < number_of_blocks(); i++) {
+    lcm.schedule(*get_block(i));
   }
-  _regalloc = nullptr;
 
   // If we inserted any instructions between a Call and his CatchNode,
   // clone the instructions on all paths below the Catch.

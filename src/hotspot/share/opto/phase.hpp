@@ -50,6 +50,7 @@ public:
     GVN,                              // Pessimistic global value numbering phase
     Ins_Select,                       // Instruction selection phase
     CFG,                              // Build a CFG
+    LCM,                              // Local code motion
     BlockLayout,                      // Linear ordering of blocks
     Register_Allocation,              // Register allocation, duh
     LIVE,                             // Dragon-book LIVE range problem
@@ -92,6 +93,7 @@ public:
     _t_matcher,
       _t_postselect_cleanup,
     _t_scheduler,
+      _t_localcodemotion,
     _t_registerAllocation,
       _t_ctorChaitin,
       _t_buildIFGvirtual,

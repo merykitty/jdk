@@ -25,12 +25,36 @@
 #ifndef SHARE_OPTO_PHASELCM_HPP
 #define SHARE_OPTO_PHASELCM_HPP
 
+#include "memory/allocation.hpp"
 #include "utilities/growableArray.hpp"
 
 class Block;
 class Node;
+class PhaseCFG;
+class PhaseChaitin;
+class SBlock;
+class SUnit;
 
-class SUnit {
+class PhaseLCM : public Phase {
+private:
+  PhaseCFG& _cfg;
+  PhaseChaitin& _regalloc;
+public:
+  PhaseLCM(PhaseCFG& cfg, PhaseChaitin& regalloc)
+    : Phase(Phase::LCM), _cfg(cfg), _regalloc(regalloc) {}
+  void schedule(Block& block);
+
+  class NodeData {
+  public:
+    int idx_in_sched;
+    int vertex_idx;
+    SUnit* sunit;
+
+    NodeData() : idx_in_sched(-1), vertex_idx(-1), sunit(nullptr) {}
+  };
+};
+
+class SUnit : public ResourceObj {
 private:
   NONCOPYABLE(SUnit);
 
@@ -49,52 +73,78 @@ public:
   public:
     Pressure(const Node* n);
     Pressure add(const Pressure& other) const;
-    Pressure max(const Pressure& other) const;
+    Pressure componentwise_max(const Pressure& other) const;
+    bool less_than(const Pressure& other) const;
+    int total_pressure() const { return _int + _float + _mask; }
+  };
 
-    bool empty() const { return _int == 0 && _float == 0 && _mask == 0; }
-    int int_pressure() const { return _int; }
-    int float_pressure() const { return _float; }
-    int mask_pressure() const { return _mask; }
+  class SDep : public ResourceObj {
+  private:
+    SUnit* _pred;
+    SUnit* _succ;
+    Pressure _pressure;
+
+  public:
+    SDep(SUnit* pred, SUnit* succ, const Pressure& pressure)
+      : _pred(pred), _succ(succ), _pressure(pressure) {}
+    void add_pressure(const Pressure& pressure) { _pressure = _pressure.add(pressure); }
+    SUnit* pred() { return _pred; }
+    SUnit* succ() { return _succ; }
+    const Pressure& pressure() const { return _pressure; }
   };
 
 private:
   GrowableArray<const Node*> _nodes;
-  GrowableArray<SUnit*> _reqs;
-  GrowableArray<SUnit*> _preds;
-  GrowableArray<SUnit*> _outs;
-  bool _is_first;
-  bool _is_prioritized;
-  bool _is_last;
-  bool _is_call;
-  bool _is_out;
+  GrowableArray<SDep*> _preds;
+  GrowableArray<SDep*> _succs;
   Pressure _temp_pressure;
   Pressure _out_pressure;
+  bool _has_sethi_ullman;
+  Pressure _sethi_ullman_value;
+  int _unsched_outs;
 
-  SUnit(const PhaseCFG& cfg, GrowableArray<SUnit*>& node_map, Node* n);
+  SUnit() : _has_sethi_ullman(false), _unsched_outs(0) {}
+  SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
+#ifdef ASSERT
+      , int start_idx, int end_idx
+#endif // ASSERT
+  );
 
 public:
-  bool is_first() const { return _is_first; }
-  bool is_last() const { return _is_last; }
-  bool is_out() const { return _is_out; }
+  static SUnit* try_create(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
+#ifdef ASSERT
+                         , int start_idx, int end_idx
+#endif // ASSERT
+  );
+  static SUnit* create_sink(const SBlock& block, const GrowableArrayView<Node*>& nodes,
+                            const GrowableArrayView<PhaseLCM::NodeData>& node_data);
+  static void calculate_sethi_ullman_numbers(SUnit* root);
+  void add_predecessors(const SBlock& block,
+                        const GrowableArrayView<PhaseLCM::NodeData>& node_data);
+  void schedule(GrowableArray<SUnit*>& worklist);
+  Node** expand(Node** start) const;
+  GrowableArray<Node*> expand() const;
 
-  static SUnit* try_create(const PhaseCFG& cfg, GrowableArray<SUnit*>& node_map, Node* n);
-  void add_predecessors(const GrowableArray<SUnit*>& node_map);
+#ifdef ASSERT
+  void dump();
+#endif
 };
 
 class SBlock {
 private:
   NONCOPYABLE(SBlock);
-
-  const Block& _block;
+  GrowableArrayView<Node*>& _scheduled;
+  int _start_idx;
+  int _end_idx;
+  SUnit* _sink;
   GrowableArray<SUnit*> _units;
-  GrowableArray<SUnit*> _out_units;
-  GrowableArray<SUnit*>& _node_map;
-  SUnit* _first_unit; // The SUnit that needs to be scheduled first
-  SUnit* _last_unit;  // The SUnit that needs to be scheduled last
+  const GrowableArrayView<PhaseLCM::NodeData>& _node_data;
 
 public:
-  SBlock(const PhaseCFG& cfg, GrowableArray<SUnit*>& node_map, const Block& block);
-  void schedule_calls();
+  SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
+         GrowableArrayView<PhaseLCM::NodeData>& node_data);
+  void schedule();
+  bool contains(const Node* n) const;
 };
 
 #endif // SHARE_OPTO_PHASELCM_HPP
