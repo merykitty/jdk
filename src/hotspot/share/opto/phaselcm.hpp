@@ -25,9 +25,7 @@
 #ifndef SHARE_OPTO_PHASELCM_HPP
 #define SHARE_OPTO_PHASELCM_HPP
 
-#include "memory/allocation.hpp"
 #include "opto/phase.hpp"
-#include "utilities/growableArray.hpp"
 
 class Block;
 class Node;

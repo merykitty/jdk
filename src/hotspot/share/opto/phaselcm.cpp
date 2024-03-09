@@ -26,7 +26,6 @@
 #include "opto/ad.hpp"
 #include "opto/c2compiler.hpp"
 #include "opto/chaitin.hpp"
-#include "opto/compile.hpp"
 #include "opto/phaselcm.hpp"
 
 static void collect_nodes(const Block& block, GrowableArray<Node*>& scheduled,
