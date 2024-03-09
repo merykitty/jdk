@@ -112,6 +112,7 @@ void Phase::print_timers() {
     tty->print_cr ("         Post Selection Cleanup: %7.3f s", timers[_t_postselect_cleanup].seconds());
   }
   tty->print_cr ("       Scheduler:                %7.3f s", timers[_t_scheduler].seconds());
+  tty->print_cr ("         Local Code Motion:        %7.3f s", timers[_t_localcodemotion].seconds());
 
   {
     tty->print_cr ("       Regalloc:            %7.3f s", timers[_t_registerAllocation].seconds());

@@ -26,6 +26,7 @@
 #define SHARE_OPTO_PHASELCM_HPP
 
 #include "memory/allocation.hpp"
+#include "opto/phase.hpp"
 #include "utilities/growableArray.hpp"
 
 class Block;
@@ -42,7 +43,7 @@ private:
 public:
   PhaseLCM(PhaseCFG& cfg, PhaseChaitin& regalloc)
     : Phase(Phase::LCM), _cfg(cfg), _regalloc(regalloc) {}
-  void schedule(Block& block);
+  bool schedule(Block& block);
 
   class NodeData {
   public:
@@ -94,6 +95,7 @@ public:
   };
 
 private:
+  const Node* _def;
   GrowableArray<const Node*> _nodes;
   GrowableArray<SDep*> _preds;
   GrowableArray<SDep*> _succs;
@@ -103,7 +105,7 @@ private:
   Pressure _sethi_ullman_value;
   int _unsched_outs;
 
-  SUnit() : _has_sethi_ullman(false), _unsched_outs(0) {}
+  SUnit() : _def(nullptr), _has_sethi_ullman(false), _unsched_outs(0) {}
   SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
 #ifdef ASSERT
       , int start_idx, int end_idx
@@ -125,9 +127,9 @@ public:
   Node** expand(Node** start) const;
   GrowableArray<Node*> expand() const;
 
-#ifdef ASSERT
+#ifndef PRODUCT
   void dump();
-#endif
+#endif // PRODUCT
 };
 
 class SBlock {
@@ -139,12 +141,19 @@ private:
   SUnit* _sink;
   GrowableArray<SUnit*> _units;
   const GrowableArrayView<PhaseLCM::NodeData>& _node_data;
+  bool _fail_to_initialize;
 
 public:
   SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
          GrowableArrayView<PhaseLCM::NodeData>& node_data);
-  void schedule();
+  bool fail_to_initialize() const { return _fail_to_initialize; }
   bool contains(const Node* n) const;
+  template <class F>
+  bool schedule(F random);
+
+#ifndef PRODUCT
+  void dump();
+#endif // PRODUCT
 };
 
 #endif // SHARE_OPTO_PHASELCM_HPP

@@ -1577,9 +1577,16 @@ void PhaseCFG::global_code_motion() {
   }
 #endif
 
-  PhaseLCM lcm(*this, regalloc);
-  for (size_t i = 0; i < number_of_blocks(); i++) {
-    lcm.schedule(*get_block(i));
+  {
+    Compile::TracePhase tp("localcodemotion", &timers[_t_localcodemotion]);
+    PhaseLCM lcm(*this, regalloc);
+    for (size_t i = 0; i < number_of_blocks(); i++) {
+      bool succeeded = lcm.schedule(*get_block(i));
+      if (!succeeded) {
+        _regalloc = nullptr;
+        return;
+      }
+    }
   }
 
   // If we inserted any instructions between a Call and his CatchNode,
