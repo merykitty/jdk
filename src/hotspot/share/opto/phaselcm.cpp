@@ -633,7 +633,7 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
   int temp_num = 0;
   for (uint i = 0; i < call->req(); i++) {
     Node* in = call->in(i);
-    if (in->is_MachTemp()) {
+    if (in != nullptr && in->is_MachTemp()) {
       assert(prev.at(node_data.at(in->_idx).vertex_idx) != -1, "");
       temp_num++;
       new_scheduled.remove(in);
