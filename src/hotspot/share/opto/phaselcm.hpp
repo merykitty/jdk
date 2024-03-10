@@ -94,7 +94,7 @@ public:
 
 private:
   const Node* _def;
-  GrowableArray<const Node*> _nodes;
+  GrowableArray<Node*> _nodes;
   GrowableArray<SDep*> _preds;
   GrowableArray<SDep*> _succs;
   Pressure _temp_pressure;
@@ -139,12 +139,10 @@ private:
   SUnit* _sink;
   GrowableArray<SUnit*> _units;
   const GrowableArrayView<PhaseLCM::NodeData>& _node_data;
-  bool _fail_to_initialize;
 
 public:
   SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
          GrowableArrayView<PhaseLCM::NodeData>& node_data);
-  bool fail_to_initialize() const { return _fail_to_initialize; }
   bool contains(const Node* n) const;
   template <class F>
   bool schedule(F random);

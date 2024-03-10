@@ -28,9 +28,9 @@
 #include "opto/chaitin.hpp"
 #include "opto/phaselcm.hpp"
 
-static void collect_nodes(const Block& block, GrowableArray<Node*>& scheduled,
-                          GrowableArray<Node*>& begin_nodes, GrowableArray<Node*>& end_nodes,
-                          GrowableArray<Node*>& create_exes,
+static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
+                          GrowableArray<Node*>& scheduled, GrowableArray<Node*>& begin_nodes,
+                          GrowableArray<Node*>& end_nodes, GrowableArray<Node*>& create_exes,
                           GrowableArrayView<PhaseLCM::NodeData>& node_data);
 
 static bool schedule_calls(GrowableArrayView<Node*>& scheduled,
@@ -43,8 +43,17 @@ static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 
 bool PhaseLCM::schedule(Block& block) {
   auto report_failure = [this]() {
-    // Subsuming loads may result in a flag being unable to stick to its uses
-    // Retry without if encounter any
+    // Subsuming loads (e.g matching "CmpI (LoadI X) Y" into "cmp [X], Y") may
+    // result in a flag being unable to stick to its use
+    // The exhaustive list of the cases:
+    // - A flag does not belong to the same block as its use, caught in
+    //   collect_nodes
+    // - The flag input of block.end() cannot be scheduled right before it,
+    //   caught in collect_nodes
+    // - A flag and its use are separated by a call, caught in schedule_calls
+    // - A flag and its use belong to the same SBlock, but they cannot be
+    //   scheduled as a whole, which results in a cycle in the dependency graph,
+    //   caught in SBlock::schedule
     if (C->subsume_loads()) {
       C->record_failure(C2Compiler::retry_no_subsuming_loads());
     } else {
@@ -53,7 +62,7 @@ bool PhaseLCM::schedule(Block& block) {
     }
   };
 
-  for (size_t i = 0; i < block.number_of_nodes(); i++) {
+  for (uint i = 0; i < block.number_of_nodes(); i++) {
     Node* n = block.get_node(i);
     // A few node types require changing a required edge to a precedence edge
     // before allocation.
@@ -79,7 +88,7 @@ bool PhaseLCM::schedule(Block& block) {
 #ifndef PRODUCT
   if (_cfg.trace_opto_pipelining()) {
     tty->print_cr("# --- scheduling B%d, before: ---", block._pre_order);
-    for (size_t i = 0; i < block.number_of_nodes(); i++) {
+    for (uint i = 0; i < block.number_of_nodes(); i++) {
       tty->print("# ");
       block.get_node(i)->dump();
     }
@@ -99,7 +108,12 @@ bool PhaseLCM::schedule(Block& block) {
   GrowableArray<Node*> end_nodes;
   // CreateEx
   GrowableArray<Node*> create_exes;
-  collect_nodes(block, scheduled, begin_nodes, end_nodes, create_exes, node_data);
+  bool success = collect_nodes(_cfg, block, scheduled, begin_nodes, end_nodes,
+                               create_exes, node_data);
+  if (!success) {
+    report_failure();
+    return false;
+  }
 
   GrowableArray<Node*> livein;
   GrowableArray<Node*> liveout;
@@ -123,7 +137,7 @@ bool PhaseLCM::schedule(Block& block) {
       livein.append(n);
     }
     for (Node* n : end_nodes) {
-      for (size_t i = 0; i < n->req(); i++) {
+      for (uint i = 0; i < n->req(); i++) {
         Node* in = n->in(i);
         if (in != nullptr && !end_nodes.contains(in)) {
           liveout.append_if_missing(in);
@@ -165,10 +179,6 @@ bool PhaseLCM::schedule(Block& block) {
       }
 
       SBlock sblock(scheduled, begin, end, node_data);
-      if (sblock.fail_to_initialize()) {
-        report_failure();
-        return false;
-      }
 
 #ifndef PRODUCT
       if (_cfg.trace_opto_pipelining()) {
@@ -205,7 +215,7 @@ bool PhaseLCM::schedule(Block& block) {
   scheduled.appendAll(&end_nodes);
   for (Node* n : create_exes) {
     int pos = begin_nodes.length() - 1;
-    for (size_t i = 0; i < n->len(); i++) {
+    for (uint i = 0; i < n->len(); i++) {
       Node* in = n->in(i);
       if (in != nullptr) {
         pos = MAX2(pos, scheduled.find(in));
@@ -217,7 +227,7 @@ bool PhaseLCM::schedule(Block& block) {
   assert(checked_cast<int>(block.number_of_nodes()) == scheduled.length(), "");
   // Cannot go all the way to scheduled.length() since we need to preserve the
   // order of IfTrue and IfFalse
-  for (size_t i = 0; i < block.end_idx(); i++) {
+  for (uint i = 0; i < block.end_idx(); i++) {
     block.map_node(scheduled.at(i), i);
   }
 
@@ -228,7 +238,7 @@ bool PhaseLCM::schedule(Block& block) {
 #ifndef PRODUCT
   if (_cfg.trace_opto_pipelining()) {
     tty->print_cr("# after scheduling");
-    for (size_t i = 0; i < block.number_of_nodes(); i++) {
+    for (uint i = 0; i < block.number_of_nodes(); i++) {
       tty->print("# ");
       block.get_node(i)->dump();
     }
@@ -239,11 +249,43 @@ bool PhaseLCM::schedule(Block& block) {
   return true;
 }
 
-static void collect_nodes(const Block& block, GrowableArray<Node*>& scheduled,
-                          GrowableArray<Node*>& begin_nodes, GrowableArray<Node*>& end_nodes,
-                          GrowableArray<Node*>& create_exes,
+static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
+                          GrowableArray<Node*>& scheduled, GrowableArray<Node*>& begin_nodes,
+                          GrowableArray<Node*>& end_nodes, GrowableArray<Node*>& create_exes,
                           GrowableArrayView<PhaseLCM::NodeData>& node_data) {
-  for (size_t idx = 0; idx < block.number_of_nodes(); idx++) {
+  // Check if there is a flag that does not belong to the same block as its use
+  for (uint idx = 0; idx < block.number_of_nodes(); idx++) {
+    Node* n = block.get_node(idx);
+    // If a flag input is in another block
+    for (uint i = 0; i < n->req(); i++) {
+      Node* in = n->in(i);
+      if (in == nullptr || !in->is_Mach() || !must_clone[in->as_Mach()->ideal_Opcode()]) {
+        continue;
+      }
+      if (cfg.get_block_for_node(in) != &block) {
+        return false;
+      }
+    }
+
+    // If an output of a flag is in another block
+    if (!n->is_Mach() || !must_clone[n->as_Mach()->ideal_Opcode()]) {
+      continue;
+    }
+    for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
+      Node* out = n->fast_out(i);
+      if (cfg.get_block_for_node(out) == &block) {
+        continue;
+      }
+      for (uint j = 0; j < out->req(); j++) {
+        if (out->in(j) == n) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // Main nodes and CreateEx nodes
+  for (uint idx = 0; idx < block.number_of_nodes(); idx++) {
     Node* n = block.get_node(idx);
     if (!n->is_Mach() || n->as_Mach()->ideal_Opcode() != Op_CreateEx) {
       scheduled.append(block.get_node(idx));
@@ -252,7 +294,7 @@ static void collect_nodes(const Block& block, GrowableArray<Node*>& scheduled,
 
     create_exes.append(n);
 #ifdef ASSERT
-    for (size_t i = 0; i < n->req(); i++) {
+    for (uint i = 0; i < n->req(); i++) {
       Node* in = n->in(i);
       assert(in == nullptr || !in->is_MachTemp(), "CreateEx cannot have Temp inputs");
     }
@@ -262,6 +304,7 @@ static void collect_nodes(const Block& block, GrowableArray<Node*>& scheduled,
 #endif // ASSERT
   }
 
+  // Begin nodes
   for (int idx = 0; idx < scheduled.length(); idx++) {
     Node* n = scheduled.at(idx);
     if (n != block.head()) {
@@ -321,6 +364,17 @@ static void collect_nodes(const Block& block, GrowableArray<Node*>& scheduled,
     node_data.at(n->_idx).idx_in_sched = -1;
   }
 #endif // ASSERT
+
+  // Check if a node in end_nodes is the predecessor of a node in scheduled
+  for (Node* end : end_nodes) {
+    for (DUIterator_Fast imax, i = end->fast_outs(imax); i < imax; i++) {
+      Node* out = end->fast_out(i);
+      if (node_data.at(out->_idx).idx_in_sched >= 0) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 // Schedule all nodes in the basic block starting at start_idx with respects to
@@ -357,7 +411,7 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
       worklist.push(call);
       while (worklist.size() > 0) {
         Node* curr = worklist.pop();
-        for (size_t i = 0; i < curr->len(); i++) {
+        for (uint i = 0; i < curr->len(); i++) {
           Node* in = curr->in(i);
           if (in == nullptr || node_data.at(in->_idx).idx_in_sched < start_idx) {
             continue;
@@ -502,7 +556,7 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
       graph_edges.at(call_edge) = std::numeric_limits<double>::infinity();
     }
 
-    for (size_t i = 0; i < n->len(); i++) {
+    for (uint i = 0; i < n->len(); i++) {
       Node* in = n->in(i);
       if (in == nullptr) {
         continue;
@@ -577,7 +631,7 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
 
   // Schedule the call
   int temp_num = 0;
-  for (size_t i = 0; i < call->req(); i++) {
+  for (uint i = 0; i < call->req(); i++) {
     Node* in = call->in(i);
     if (in->is_MachTemp()) {
       assert(prev.at(node_data.at(in->_idx).vertex_idx) != -1, "");
@@ -751,7 +805,7 @@ static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block) 
 SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
                GrowableArrayView<PhaseLCM::NodeData>& node_data)
   : _scheduled(scheduled), _start_idx(start_idx), _end_idx(end_idx),
-    _sink(nullptr), _node_data(node_data), _fail_to_initialize(false) {
+    _sink(nullptr), _node_data(node_data) {
   for (int i = start_idx; i < end_idx; i++) {
     Node* n = scheduled.at(i);
     SUnit* unit = SUnit::try_create(n, node_data
@@ -761,15 +815,13 @@ SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
     }
   }
 
+#ifdef ASSERT
   for (int i = start_idx; i < end_idx; i++) {
     Node* n = scheduled.at(i);
     SUnit* unit = _node_data.at(n->_idx).sunit;
-    if (unit == nullptr) {
-      _fail_to_initialize = true;
-      return;
-    }
-    assert(_units.contains(unit), "a node must belong to a unit");
+    assert(unit != nullptr && _units.contains(unit), "a node must belong to a unit");
   }
+#endif // ASSERT
 
   for (SUnit* unit : _units) {
     unit->add_predecessors(*this, node_data);
@@ -834,7 +886,7 @@ SUnit::SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
     _nodes.append(m);
   };
 
-  for (size_t i = 0; i < n->req(); i++) {
+  for (uint i = 0; i < n->req(); i++) {
     Node* in = n->in(i);
     if (in != nullptr && in->is_MachTemp()) {
       _temp_pressure = _temp_pressure.add(Pressure(in));
@@ -874,17 +926,16 @@ SUnit* SUnit::try_create(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_da
   worklist.push(n);
   while (worklist.size() > 0) {
     Node* child = worklist.pop();
-    for (size_t i = 0; i < child->req(); i++) {
+    for (uint i = 0; i < child->req(); i++) {
       Node* in = child->in(i);
       if (in == nullptr || !in->is_Mach()) {
         continue;
       }
       if (must_clone[in->as_Mach()->ideal_Opcode()]) {
+#ifdef ASSERT
         int idx = node_data.at(in->_idx).idx_in_sched;
-        if (idx == -1) {
-          return nullptr;
-        }
         assert(idx >= start_idx && idx < end_idx, "flags must come with its successor");
+#endif // ASSERT
         SUnit* pred_unit = new SUnit(in, node_data
                                      DEBUG_ONLY(COMMA start_idx COMMA end_idx));
         unit->_nodes.insert_before(0, &pred_unit->_nodes);
@@ -1050,7 +1101,7 @@ void SUnit::add_predecessors(const SBlock& block,
   GrowableArray<const Node*> input_nodes;
   for (const Node* n : _nodes) {
     assert(block.contains(n), "");
-    for (size_t i = 0; i < n->len(); i++) {
+    for (uint i = 0; i < n->len(); i++) {
       Node* in = n->in(i);
       if (in == nullptr || input_nodes.contains(in)) {
         continue;
