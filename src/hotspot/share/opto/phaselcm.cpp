@@ -322,11 +322,9 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
     break;
   }
 
-#ifdef ASSERT
   for (int idx = 0; idx < scheduled.length(); idx++) {
     node_data.at(scheduled.at(idx)->_idx).idx_in_sched = idx;
   }
-#endif // ASSERT
 
   for (int idx = 0; idx < scheduled.length(); idx++) {
     Node* n = scheduled.at(idx);
@@ -345,7 +343,7 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
       break;
     } else if (n == block.end()) {
       SUnit* end_unit = SUnit::try_create(n, node_data
-                                          DEBUG_ONLY(COMMA 0 COMMA scheduled.length()));
+                                          DEBUG_ONLY(COMMA -1 COMMA scheduled.length()));
       end_nodes = end_unit->expand();
       break;
     }
@@ -358,12 +356,10 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
     Node* n = scheduled.at(idx);
     node_data.at(n->_idx).idx_in_sched = idx;
   }
-#ifdef ASSERT
   for (int idx = 0; idx < end_nodes.length(); idx++) {
     Node* n = end_nodes.at(idx);
     node_data.at(n->_idx).idx_in_sched = -1;
   }
-#endif // ASSERT
 
   // Check if a node in end_nodes is the predecessor of a node in scheduled
   for (Node* end : end_nodes) {
@@ -522,6 +518,11 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
   // All successors of the call must be in the second partition
   for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
     Node* out = call->fast_out(i);
+    if (out->is_Phi()) {
+      // A Phi in another block does not care, a Phi in this block goes backward
+      // to the start of the block
+      continue;
+    }
     int out_idx = node_data.at(out->_idx).vertex_idx;
     if (out_idx == -1) {
       continue;
@@ -879,11 +880,11 @@ SUnit::SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
 #endif // ASSERT
 ) : _def(n), _has_sethi_ullman(false), _unsched_outs(0) {
   auto add_node = [&](Node* m) {
-#ifdef ASSERT
     int idx = node_data.at(m->_idx).idx_in_sched;
     assert(idx >= start_idx && idx < end_idx, "must be together");
-#endif // ASSERT
-    _nodes.append(m);
+    if (idx >= 0) {
+      _nodes.append(m);
+    }
   };
 
   for (uint i = 0; i < n->req(); i++) {
