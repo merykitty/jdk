@@ -29,8 +29,8 @@
 #include "opto/phaselcm.hpp"
 
 static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
-                          GrowableArray<Node*>& scheduled, GrowableArray<Node*>& begin_nodes,
-                          GrowableArray<Node*>& end_nodes, GrowableArray<Node*>& create_exes,
+                          GrowableArray<Node*>& scheduled,
+                          GrowableArray<Node*>& begin_nodes, GrowableArray<Node*>& end_nodes,
                           GrowableArrayView<PhaseLCM::NodeData>& node_data);
 
 static bool schedule_calls(GrowableArrayView<Node*>& scheduled,
@@ -38,6 +38,9 @@ static bool schedule_calls(GrowableArrayView<Node*>& scheduled,
                            const GrowableArrayView<Node*>& livein,
                            const GrowableArrayView<Node*>& liveout,
                            GrowableArray<PhaseLCM::NodeData>& node_data);
+
+static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
+                                   GrowableArray<Node*>& scheduled, int begin_idx);
 
 static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 
@@ -106,10 +109,7 @@ bool PhaseLCM::schedule(Block& block) {
   GrowableArray<Node*> begin_nodes;
   // MachNull, If, Catch, etc
   GrowableArray<Node*> end_nodes;
-  // CreateEx
-  GrowableArray<Node*> create_exes;
-  bool success = collect_nodes(_cfg, block, scheduled, begin_nodes, end_nodes,
-                               create_exes, node_data);
+  bool success = collect_nodes(_cfg, block, scheduled, begin_nodes, end_nodes, node_data);
   if (!success) {
     report_failure();
     return false;
@@ -209,20 +209,13 @@ bool PhaseLCM::schedule(Block& block) {
     }
   }
 
-  // Schedule the remaining nodes, CreateEx nodes are scheduled as soon as they
-  // are ready (after the begin nodes)
+  // Schedule the remaining nodes
   scheduled.insert_before(0, &begin_nodes);
   scheduled.appendAll(&end_nodes);
-  for (Node* n : create_exes) {
-    int pos = begin_nodes.length() - 1;
-    for (uint i = 0; i < n->len(); i++) {
-      Node* in = n->in(i);
-      if (in != nullptr) {
-        pos = MAX2(pos, scheduled.find(in));
-      }
-    }
-    scheduled.insert_before(pos + 1, n);
-  }
+  assert(checked_cast<int>(block.number_of_nodes()) == scheduled.length(), "");
+
+  // Schedule CreateEx and CheckCastPP as early as possible
+  schedule_special_nodes(_cfg, block, scheduled, begin_nodes.length());
 
   assert(checked_cast<int>(block.number_of_nodes()) == scheduled.length(), "");
   // Cannot go all the way to scheduled.length() since we need to preserve the
@@ -250,8 +243,8 @@ bool PhaseLCM::schedule(Block& block) {
 }
 
 static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
-                          GrowableArray<Node*>& scheduled, GrowableArray<Node*>& begin_nodes,
-                          GrowableArray<Node*>& end_nodes, GrowableArray<Node*>& create_exes,
+                          GrowableArray<Node*>& scheduled,
+                          GrowableArray<Node*>& begin_nodes, GrowableArray<Node*>& end_nodes,
                           GrowableArrayView<PhaseLCM::NodeData>& node_data) {
   // Check if there is a flag that does not belong to the same block as its use
   for (uint idx = 0; idx < block.number_of_nodes(); idx++) {
@@ -284,24 +277,8 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
     }
   }
 
-  // Main nodes and CreateEx nodes
   for (uint idx = 0; idx < block.number_of_nodes(); idx++) {
-    Node* n = block.get_node(idx);
-    if (!n->is_Mach() || n->as_Mach()->ideal_Opcode() != Op_CreateEx) {
-      scheduled.append(block.get_node(idx));
-      continue;
-    }
-
-    create_exes.append(n);
-#ifdef ASSERT
-    for (uint i = 0; i < n->req(); i++) {
-      Node* in = n->in(i);
-      assert(in == nullptr || !in->is_MachTemp(), "CreateEx cannot have Temp inputs");
-    }
-    for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
-      assert(!n->fast_out(i)->is_Proj(), "CreateEx cannot have Proj outputs");
-    }
-#endif // ASSERT
+    scheduled.append(block.get_node(idx));
   }
 
   // Begin nodes
@@ -371,6 +348,54 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
     }
   }
   return true;
+}
+
+// Schedule CreateEx and CheckCastPP as early as possible
+static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
+                                   GrowableArray<Node*>& scheduled, int begin_idx) {
+  GrowableArray<Node*> special_nodes;
+  for (int i = scheduled.length() - 1; i >= 0; i--) {
+    Node* n = scheduled.at(i);
+    if (!n->is_Mach()) {
+      continue;
+    }
+    int iop = n->as_Mach()->ideal_Opcode();
+    if (iop == Op_CreateEx || iop == Op_CheckCastPP) {
+      special_nodes.append(n);
+      scheduled.remove_at(i);
+    }
+  }
+  while (!special_nodes.is_empty()) {
+    for (int idx = special_nodes.length() - 1; idx >= 0; idx--) {
+      int pos = begin_idx - 1;
+      bool delay = false;
+      Node* n = special_nodes.at(idx);
+      for (uint i = 0; i < n->len(); i++) {
+        Node* in = n->in(i);
+        if (in == nullptr) {
+          continue;
+        }
+        int curr_pos = scheduled.find(in);
+        if (curr_pos == -1 && cfg.get_block_for_node(in) == &block) {
+          delay = true;
+          break;
+        }
+        pos = MAX2(pos, curr_pos);
+      }
+      if (delay) {
+        continue;
+      }
+
+      while (true) {
+        pos++;
+        if (pos == scheduled.length() || !scheduled.at(pos)->is_Proj()) {
+          break;
+        }
+      }
+      scheduled.insert_before(pos, n);
+      special_nodes.remove_at(idx);
+    }
+  }
 }
 
 // Schedule all nodes in the basic block starting at start_idx with respects to
