@@ -33,7 +33,7 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
                           GrowableArray<Node*>& begin_nodes, GrowableArray<Node*>& end_nodes,
                           GrowableArrayView<PhaseLCM::NodeData>& node_data);
 
-static bool schedule_calls(GrowableArrayView<Node*>& scheduled,
+static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& scheduled,
                            GrowableArray<int>& bounds,
                            const GrowableArrayView<Node*>& livein,
                            const GrowableArrayView<Node*>& liveout,
@@ -45,7 +45,7 @@ static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
 static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 
 bool PhaseLCM::schedule(Block& block) {
-  auto report_failure = [this]() {
+  auto report_failure = [&]() {
     // Subsuming loads (e.g matching "CmpI (LoadI X) Y" into "cmp [X], Y") may
     // result in a flag being unable to stick to its use
     // The exhaustive list of the cases:
@@ -149,7 +149,7 @@ bool PhaseLCM::schedule(Block& block) {
   if (scheduled.length() > 1) {
     GrowableArray<int> bounds;
     if (!StressLCM && OptoRegScheduling) {
-      bool success = schedule_calls(scheduled, bounds, livein, liveout, node_data);
+      bool success = schedule_calls(block, scheduled, bounds, livein, liveout, node_data);
       if (!success) {
         report_failure();
         return false;
@@ -282,48 +282,37 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
   }
 
   // Begin nodes
-  for (int idx = 0; idx < scheduled.length(); idx++) {
-    Node* n = scheduled.at(idx);
-    if (n != block.head()) {
-      continue;
+  Node* head = block.head();
+  begin_nodes.append(head);
+  scheduled.remove(head);
+  for (DUIterator_Fast imax, i = head->fast_outs(imax); i < imax; i++) {
+    Node* out = head->fast_out(i);
+    if (out->is_Phi() || out->is_Proj() || out->Opcode() == Op_Con) {
+      begin_nodes.append(out);
+      scheduled.remove(out);
     }
-    begin_nodes.append(n);
-    scheduled.remove_at(idx);
-    for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
-      Node* out = n->fast_out(i);
-      if (out->is_Phi() || out->is_Proj() || out->Opcode() == Op_Con) {
-        begin_nodes.append(out);
-        scheduled.remove(out);
-      }
-    }
-    break;
   }
 
   for (int idx = 0; idx < scheduled.length(); idx++) {
     node_data.at(scheduled.at(idx)->_idx).idx_in_sched = idx;
   }
 
-  for (int idx = 0; idx < scheduled.length(); idx++) {
-    Node* n = scheduled.at(idx);
-    if (n->is_MachNullCheck()) {
-      assert(n == block.end(), "");
-      Node* mem = n->in(1);
-      SUnit* end_unit = SUnit::try_create(mem, node_data
-                                          DEBUG_ONLY(COMMA 0 COMMA scheduled.length()));
-      end_nodes = end_unit->expand();
-      end_nodes.append(n);
-      for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
-        Node* out = n->fast_out(i);
-        assert(out->is_IfTrue() || out->is_IfFalse(), "");
-        end_nodes.append(out);
-      }
-      break;
-    } else if (n == block.end()) {
-      SUnit* end_unit = SUnit::try_create(n, node_data
-                                          DEBUG_ONLY(COMMA -1 COMMA scheduled.length()));
-      end_nodes = end_unit->expand();
-      break;
+  Node* end = block.end();
+  if (end->is_MachNullCheck()) {
+    Node* mem = end->in(1);
+    SUnit* end_unit = SUnit::try_create(mem, node_data
+                                        DEBUG_ONLY(COMMA 0 COMMA scheduled.length()));
+    end_nodes = end_unit->expand();
+    end_nodes.append(end);
+    for (DUIterator_Fast imax, i = end->fast_outs(imax); i < imax; i++) {
+      Node* out = end->fast_out(i);
+      assert(out->is_IfTrue() || out->is_IfFalse(), "");
+      end_nodes.append(out);
     }
+  } else {
+    SUnit* end_unit = SUnit::try_create(end, node_data
+                                        DEBUG_ONLY(COMMA -1 COMMA scheduled.length()));
+    end_nodes = end_unit->expand();
   }
   for (Node* end : end_nodes) {
     scheduled.remove(end);
@@ -404,7 +393,8 @@ static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
 // This function assumes that nodes are correctly scheduled with respects to
 // start_idx, i.e. no nodes from start_idx is a direct/indirect predecessor of
 // another node before start_idx.
-static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start_idx,
+static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled,
+                                  int start_idx, int end_idx,
                                   GrowableArray<int>& bounds,
                                   const GrowableArrayView<Node*>& livein,
                                   const GrowableArrayView<Node*>& liveout,
@@ -415,7 +405,7 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
   auto find_first_call = [&]() -> Node* {
     Node* call = nullptr;
     int call_cnt = 0;
-    for (int i = start_idx; i < scheduled.length(); i++) {
+    for (int i = start_idx; i < end_idx; i++) {
       Node* n = scheduled.at(i);
       if (n->is_MachCall() || (n->is_Mach() && n->as_Mach()->has_call())) {
         call = n;
@@ -556,7 +546,7 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
     graph_edges.at(call_out) = std::numeric_limits<double>::infinity();
   }
 
-  for (int i = start_idx; i < scheduled.length(); i++) {
+  for (int i = start_idx; i < end_idx; i++) {
     Node* n = scheduled.at(i);
     int n_idx = node_data.at(n->_idx).vertex_idx;
     assert(n_idx != -1, "");
@@ -640,11 +630,11 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
   // No sink, just find the connected component
   bfs(prev, path_weights, vertex_num, graph_edges, src_idx, -1, queue);
 
-  GrowableArray<Node*> new_scheduled(scheduled.length());
+  GrowableArray<Node*> new_scheduled(end_idx - start_idx);
   for (int i = 0; i < start_idx; i++) {
     new_scheduled.append(scheduled.at(i));
   }
-  for (int i = start_idx; i < scheduled.length(); i++) {
+  for (int i = start_idx; i < end_idx; i++) {
     Node* n = scheduled.at(i);
     if (n == call) {
       continue;
@@ -683,25 +673,26 @@ static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled, int start
 
   int next_start_idx = new_scheduled.length();
   bounds.append(next_start_idx);
-  for (int i = start_idx; i < scheduled.length(); i++) {
+  for (int i = start_idx; i < end_idx; i++) {
     Node* n = scheduled.at(i);
     int n_idx = node_data.at(n->_idx).vertex_idx;
     if (prev.at(n_idx) == -1) {
       new_scheduled.append(n);
     }
   }
-  assert(new_scheduled.length() == scheduled.length(), "");
-  for (int i = start_idx; i < scheduled.length(); i++) {
+  assert(new_scheduled.length() == end_idx, "");
+  for (int i = start_idx; i < end_idx; i++) {
     Node* n = new_scheduled.at(i);
     scheduled.at(i) = n;
     node_data.at(n->_idx).idx_in_sched = i;
   }
 
-  return schedule_calls_helper(scheduled, next_start_idx, bounds, next_livein, liveout,
-                               node_data, vertex_num, graph_edges, src_idx, snk_idx);
+  return schedule_calls_helper(scheduled, next_start_idx, end_idx,
+                               bounds, next_livein, liveout, node_data,
+                               vertex_num, graph_edges, src_idx, snk_idx);
 }
 
-static bool schedule_calls(GrowableArrayView<Node*>& scheduled,
+static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& scheduled,
                            GrowableArray<int>& bounds,
                            const GrowableArrayView<Node*>& livein,
                            const GrowableArrayView<Node*>& liveout,
@@ -724,11 +715,132 @@ static bool schedule_calls(GrowableArrayView<Node*>& scheduled,
   GrowableArray<double> graph_edges(vertex_num * vertex_num);
   graph_edges.at_grow(vertex_num * vertex_num - 1);
   bounds.clear();
-  bounds.append(0);
-  bool success = schedule_calls_helper(scheduled, 0, bounds, livein, liveout, node_data,
-                                       vertex_num, graph_edges, src_idx, snk_idx);
-  bounds.append(scheduled.length());
-  return success;
+
+  Node* end = block.end();
+  if (end->is_Catch()) {
+    // The block is dishonest, there can be no nodes between a CatchNode and its
+    // corresponding call. This is fixed after LCM but the code there does not
+    // take into consideration that derived pointers must go with their bases.
+    // We try to avoid this bug by scheduling all nodes before the call except
+    // those which depend on the call.
+    // TODO: PROPERLY FIX THE ISSUE
+    GrowableArray<Node*> worklist(scheduled.length());
+    Node* call = end->in(0)->in(0);
+    int &call_idx = node_data.at(call->_idx).idx_in_sched;
+    call_idx = -1;
+    worklist.append(call);
+    while (!worklist.is_empty()) {
+      int idx = worklist.length() - 1;
+      Node* curr = worklist.at(idx);
+      worklist.remove_at(idx);
+      for (DUIterator_Fast imax, i = curr->fast_outs(imax); i < imax; i++) {
+        Node* out = curr->fast_out(i);
+        if (out == call) {
+          // Cycle
+          return false;
+        }
+        int& out_idx = node_data.at(out->_idx).idx_in_sched;
+        if (out_idx != -1) {
+          out_idx = -1;
+          worklist.append(out);
+        }
+      }
+      for (uint i = 0; i < curr->req(); i++) {
+        Node* in = curr->in(i);
+        if (in == nullptr || !in->is_Mach() ||
+            !must_clone[in->as_Mach()->ideal_Opcode()]) {
+          continue;
+        }
+
+        int& in_idx = node_data.at(in->_idx).idx_in_sched;
+        if (in_idx != -1) {
+          in_idx = -1;
+          worklist.append(in);
+        }
+      }
+    }
+
+    // Use worklist to store new_scheduled
+    worklist.clear();
+    for (Node* n : scheduled) {
+      int& idx = node_data.at(n->_idx).idx_in_sched;
+      if (idx >= 0) {
+        idx = worklist.length();
+        worklist.append(n);
+      }
+    }
+
+#ifdef ASSERT
+    for (uint i = 0; i < call->req(); i++) {
+      Node* in = call->in(i);
+      assert(in == nullptr || !in->is_MachTemp(),
+             "A call should not have MachTemp inputs");
+    }
+#endif // ASSERT
+    call_idx = worklist.length();
+    worklist.append(call);
+    for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
+      Node* out = call->fast_out(i);
+      if (out->is_Proj()) {
+        node_data.at(out->_idx).idx_in_sched = worklist.length();
+        worklist.append(out);
+      }
+    }
+    int after_call_idx = worklist.length();
+    for (Node* n : scheduled) {
+      int& idx = node_data.at(n->_idx).idx_in_sched;
+      if (idx == -1) {
+        idx = worklist.length();
+        worklist.append(n);
+      }
+    }
+
+    assert(worklist.length() == scheduled.length(), "");
+    for (int i = 0; i < scheduled.length(); i++) {
+      scheduled.at(i) = worklist.at(i);
+    }
+
+    // Now use worklist to store live nodes information
+    worklist.clear();
+    for (uint i = 0; i < call->req(); i++) {
+      Node* in = call->in(i);
+      if (in != nullptr) {
+        worklist.append(in);
+      }
+    }
+
+    bounds.append(0);
+    bool success = schedule_calls_helper(scheduled, 0, call_idx,
+                                         bounds, livein, worklist, node_data,
+                                         vertex_num, graph_edges, src_idx, snk_idx);
+    if (!success) {
+      return false;
+    }
+
+    bounds.append(call_idx);
+
+    worklist.clear();
+    worklist.append(call);
+    for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
+      Node* out = call->fast_out(i);
+      if (out->is_Proj()) {
+        worklist.append(out);
+      }
+    }
+    bounds.append(after_call_idx);
+    success = schedule_calls_helper(scheduled, after_call_idx, scheduled.length(),
+                                         bounds, worklist, liveout, node_data,
+                                         vertex_num, graph_edges, src_idx, snk_idx);
+    bounds.append(scheduled.length());
+    return success;
+  } else {
+    bounds.append(0);
+    bool success = schedule_calls_helper(scheduled, 0, scheduled.length(),
+                                         bounds, livein, liveout, node_data,
+                                         vertex_num, graph_edges, src_idx, snk_idx);
+    bounds.append(scheduled.length());
+    return success;
+  }
 }
 
 static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block) {
@@ -852,15 +964,15 @@ SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
   for (SUnit* unit : _units) {
     unit->add_predecessors(*this, node_data);
   }
-  _sink = SUnit::create_sink(*this,
-                             GrowableArrayFromArray<Node*>(scheduled.adr_at(start_idx),
-                                                           end_idx - start_idx),
-                             node_data);
+  _sink = SUnit::create_sink(*this, _units);
   _units.append(_sink);
   if (!StressLCM && OptoRegScheduling) {
+    SUnit::calculate_sethi_ullman_numbers(_sink);
+#ifdef ASSERT
     for (SUnit* unit : _units) {
-      SUnit::calculate_sethi_ullman_numbers(unit);
+      assert(unit->has_sethi_ullman(), "must be reachable from sink");
     }
+#endif // ASSERT
   }
 }
 
@@ -903,7 +1015,7 @@ SUnit::SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
 #ifdef ASSERT
            , int start_idx, int end_idx
 #endif // ASSERT
-) : _def(n), _has_sethi_ullman(false), _unsched_outs(0) {
+) : _def(n), _sethi_ullman(SethiUllmanStatus::not_calculated), _unsched_outs(0) {
   auto add_node = [&](Node* m) {
     int idx = node_data.at(m->_idx).idx_in_sched;
     assert(idx >= start_idx && idx < end_idx, "must be together");
@@ -980,32 +1092,26 @@ SUnit* SUnit::try_create(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_da
   return unit;
 }
 
-SUnit* SUnit::create_sink(const SBlock& block, const GrowableArrayView<Node*>& nodes,
-                          const GrowableArrayView<PhaseLCM::NodeData>& node_data) {
+SUnit* SUnit::create_sink(const SBlock& block, const GrowableArrayView<SUnit*>& units) {
   SUnit* sink = new SUnit();
-  for (const Node* n : nodes) {
-    SUnit* unit = node_data.at(n->_idx).sunit;
-    for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
-      const Node* out = n->fast_out(i);
-      if (block.contains(out)) {
-        continue;
-      }
-      Pressure p(n);
-      bool existed = false;
-      for (SDep* dep : sink->_preds) {
-        if (dep->pred() == unit) {
-          dep->add_pressure(p);
-          existed = true;
-          break;
+  for (SUnit* unit : units) {
+    Pressure p;
+    for (Node* n : unit->_nodes) {
+      for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
+        Node* out = n->fast_out(i);
+        if (block.contains(out)) {
+          continue;
         }
+
+        p = p.add(Pressure(n));
+        break;
       }
-      if (!existed) {
-        SDep* dep = new SDep(unit, sink, p);
-        sink->_preds.append(dep);
-        unit->_succs.append(dep);
-        unit->_unsched_outs++;
-      }
-      break;
+    }
+    if (unit->_unsched_outs == 0 || p.total_pressure() > 0) {
+      SDep* dep = new SDep(unit, sink, p);
+      sink->_preds.append(dep);
+      unit->_succs.append(dep);
+      unit->_unsched_outs++;
     }
   }
   return sink;
@@ -1061,7 +1167,7 @@ static SUnit::Pressure calculate_input_sethi_ullman(SUnit::SDep** inputs, int n,
 }
 
 void SUnit::calculate_sethi_ullman_numbers(SUnit* root) {
-  if (root->_has_sethi_ullman) {
+  if (root->_sethi_ullman == SethiUllmanStatus::calculated) {
     return;
   }
 
@@ -1069,15 +1175,17 @@ void SUnit::calculate_sethi_ullman_numbers(SUnit* root) {
   worklist.append(root);
   while (!worklist.is_empty()) {
     SUnit* curr = worklist.at(worklist.length() - 1);
-    if (curr->_has_sethi_ullman) {
+    if (curr->_sethi_ullman == SethiUllmanStatus::calculated) {
       worklist.remove_at(worklist.length() - 1);
       continue;
     }
 
+    curr->_sethi_ullman = SethiUllmanStatus::calculating;
     bool wait_for_input = false;
     for (SDep* dep : curr->_preds) {
       SUnit* pred = dep->pred();
-      if (pred != nullptr && !pred->_has_sethi_ullman) {
+      if (pred != nullptr &&
+          pred->_sethi_ullman == SethiUllmanStatus::not_calculated) {
         wait_for_input = true;
         worklist.append(pred);
       }
@@ -1118,7 +1226,7 @@ void SUnit::calculate_sethi_ullman_numbers(SUnit* root) {
     Pressure total = input.componentwise_max(in).componentwise_max(curr->_out_pressure);
 
     curr->_sethi_ullman_value = total;
-    curr->_has_sethi_ullman = true;
+    curr->_sethi_ullman = SethiUllmanStatus::calculated;
   }
 }
 

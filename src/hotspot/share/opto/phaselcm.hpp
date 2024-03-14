@@ -92,6 +92,12 @@ public:
     const Pressure& pressure() const { return _pressure; }
   };
 
+  enum class SethiUllmanStatus {
+    not_calculated,
+    calculating,
+    calculated
+  };
+
 private:
   const Node* _def;
   GrowableArray<Node*> _nodes;
@@ -99,11 +105,12 @@ private:
   GrowableArray<SDep*> _succs;
   Pressure _temp_pressure;
   Pressure _out_pressure;
-  bool _has_sethi_ullman;
+  SethiUllmanStatus _sethi_ullman;
   Pressure _sethi_ullman_value;
   int _unsched_outs;
 
-  SUnit() : _def(nullptr), _has_sethi_ullman(false), _unsched_outs(0) {}
+  SUnit() : _def(nullptr), _sethi_ullman(SethiUllmanStatus::not_calculated),
+            _unsched_outs(0) {}
   SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
 #ifdef ASSERT
       , int start_idx, int end_idx
@@ -116,14 +123,19 @@ public:
                          , int start_idx, int end_idx
 #endif // ASSERT
   );
-  static SUnit* create_sink(const SBlock& block, const GrowableArrayView<Node*>& nodes,
-                            const GrowableArrayView<PhaseLCM::NodeData>& node_data);
+  static SUnit* create_sink(const SBlock& block, const GrowableArrayView<SUnit*>& units);
   static void calculate_sethi_ullman_numbers(SUnit* root);
   void add_predecessors(const SBlock& block,
                         const GrowableArrayView<PhaseLCM::NodeData>& node_data);
   void schedule(GrowableArray<SUnit*>& worklist);
   Node** expand(Node** start) const;
   GrowableArray<Node*> expand() const;
+
+#ifdef ASSERT
+  bool has_sethi_ullman() const {
+    return _sethi_ullman == SethiUllmanStatus::calculated;
+  }
+#endif // ASSERT
 
 #ifndef PRODUCT
   void dump();
