@@ -148,15 +148,10 @@ bool PhaseLCM::schedule(Block& block) {
 
   if (scheduled.length() > 1) {
     GrowableArray<int> bounds;
-    if (!StressLCM && OptoRegScheduling) {
-      bool success = schedule_calls(block, scheduled, bounds, livein, liveout, node_data);
-      if (!success) {
-        report_failure();
-        return false;
-      }
-    } else {
-      bounds.append(0);
-      bounds.append(scheduled.length());
+    bool success = schedule_calls(block, scheduled, bounds, livein, liveout, node_data);
+    if (!success) {
+      report_failure();
+      return false;
     }
 
 #ifndef PRODUCT
@@ -811,9 +806,12 @@ static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& schedul
     }
 
     bounds.append(0);
-    bool success = schedule_calls_helper(scheduled, 0, call_idx,
-                                         bounds, livein, worklist, node_data,
-                                         vertex_num, graph_edges, src_idx, snk_idx);
+    bool success = true;
+    if (!StressLCM && OptoRegScheduling) {
+      success = schedule_calls_helper(scheduled, 0, call_idx,
+                                      bounds, livein, worklist, node_data,
+                                      vertex_num, graph_edges, src_idx, snk_idx);
+    }
     if (!success) {
       return false;
     }
@@ -829,16 +827,22 @@ static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& schedul
       }
     }
     bounds.append(after_call_idx);
-    success = schedule_calls_helper(scheduled, after_call_idx, scheduled.length(),
-                                         bounds, worklist, liveout, node_data,
-                                         vertex_num, graph_edges, src_idx, snk_idx);
+
+    if (!StressLCM && OptoRegScheduling) {
+      success = schedule_calls_helper(scheduled, after_call_idx, scheduled.length(),
+                                      bounds, worklist, liveout, node_data,
+                                      vertex_num, graph_edges, src_idx, snk_idx);
+    }
     bounds.append(scheduled.length());
     return success;
   } else {
     bounds.append(0);
-    bool success = schedule_calls_helper(scheduled, 0, scheduled.length(),
-                                         bounds, livein, liveout, node_data,
-                                         vertex_num, graph_edges, src_idx, snk_idx);
+    bool success = true;
+    if (!StressLCM && OptoRegScheduling) {
+      success = schedule_calls_helper(scheduled, 0, scheduled.length(),
+                                      bounds, livein, liveout, node_data,
+                                      vertex_num, graph_edges, src_idx, snk_idx);
+    }
     bounds.append(scheduled.length());
     return success;
   }
