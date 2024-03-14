@@ -957,6 +957,15 @@ SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
   for (int i = start_idx; i < end_idx; i++) {
     Node* n = scheduled.at(i);
     SUnit* unit = _node_data.at(n->_idx).sunit;
+    if (unit == nullptr || !_units.contains(unit)) {
+      for (int i = 0; i < scheduled.length(); i++) {
+        tty->print("%d: ", i);
+        scheduled.at(i)->dump();
+      }
+      tty->print_cr("start: %d, end: %d", start_idx, end_idx);
+    }
+    assert(unit != nullptr, "");
+    assert(_units.contains(unit), "");
     assert(unit != nullptr && _units.contains(unit), "a node must belong to a unit");
   }
 #endif // ASSERT
