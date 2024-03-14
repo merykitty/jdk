@@ -747,15 +747,16 @@ static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& schedul
       }
       for (uint i = 0; i < curr->req(); i++) {
         Node* in = curr->in(i);
-        if (in == nullptr || !in->is_Mach() ||
-            !must_clone[in->as_Mach()->ideal_Opcode()]) {
+        if (in == nullptr) {
           continue;
         }
-
-        int& in_idx = node_data.at(in->_idx).idx_in_sched;
-        if (in_idx != -1) {
-          in_idx = -1;
-          worklist.append(in);
+        if (in->is_MachTemp() ||
+            (in->is_Mach() && must_clone[in->as_Mach()->ideal_Opcode()])) {
+          int& in_idx = node_data.at(in->_idx).idx_in_sched;
+          if (in_idx != -1) {
+            in_idx = -1;
+            worklist.append(in);
+          }
         }
       }
     }
