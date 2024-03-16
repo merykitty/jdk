@@ -42,7 +42,10 @@ public:
   PhaseLCM(PhaseCFG& cfg, PhaseChaitin& regalloc)
     : Phase(Phase::LCM), _cfg(cfg), _regalloc(regalloc) {}
   bool schedule(Block& block);
+};
 
+class BlockScheduler {
+public:
   class NodeData {
   public:
     int idx_in_sched;
@@ -51,6 +54,34 @@ public:
 
     NodeData() : idx_in_sched(-1), vertex_idx(-1), sunit(nullptr) {}
   };
+
+private:
+  Compile& C;
+  const PhaseCFG& _cfg;
+  PhaseChaitin& _regalloc;
+  Block& _block;
+  GrowableArray<Node*> _scheduled;
+  GrowableArray<Node*> _begin_nodes;
+  GrowableArray<Node*> _end_nodes;
+  GrowableArray<NodeData> _node_data;
+  GrowableArray<int> _bounds;
+
+  // Call scheduler helpers
+  int _vertex_num;
+  GrowableArray<double> _graph_edges;
+  int _src_idx;
+  int _snk_idx;
+
+  bool do_schedule();
+  bool schedule_calls(const GrowableArrayView<Node*>& livein,
+                      const GrowableArrayView<Node*>& liveout);
+  bool schedule_calls_helper(int start_idx, int end_idx,
+                             const GrowableArrayView<Node*>& livein,
+                             const GrowableArrayView<Node*>& liveout);
+public:
+  BlockScheduler(Compile& C, const PhaseCFG& cfg,
+                 PhaseChaitin& regalloc, Block& block);
+  bool schedule();
 };
 
 class SUnit : public ResourceObj {
@@ -58,6 +89,7 @@ private:
   NONCOPYABLE(SUnit);
 
 public:
+  // An approximation of the pressure exerted by a group of nodes
   class Pressure {
   private:
     friend class SUnit;
@@ -111,14 +143,14 @@ private:
 
   SUnit() : _def(nullptr), _sethi_ullman(SethiUllmanStatus::not_calculated),
             _unsched_outs(0) {}
-  SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
+  SUnit(Node* n, GrowableArrayView<BlockScheduler::NodeData>& node_data
 #ifdef ASSERT
       , int start_idx, int end_idx
 #endif // ASSERT
   );
 
 public:
-  static SUnit* try_create(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
+  static SUnit* try_create(Node* n, GrowableArrayView<BlockScheduler::NodeData>& node_data
 #ifdef ASSERT
                          , int start_idx, int end_idx
 #endif // ASSERT
@@ -126,7 +158,7 @@ public:
   static SUnit* create_sink(const SBlock& block, const GrowableArrayView<SUnit*>& units);
   static void calculate_sethi_ullman_numbers(SUnit* root);
   void add_predecessors(const SBlock& block,
-                        const GrowableArrayView<PhaseLCM::NodeData>& node_data);
+                        const GrowableArrayView<BlockScheduler::NodeData>& node_data);
   void schedule(GrowableArray<SUnit*>& worklist);
   Node** expand(Node** start) const;
   GrowableArray<Node*> expand() const;
@@ -150,11 +182,11 @@ private:
   int _end_idx;
   SUnit* _sink;
   GrowableArray<SUnit*> _units;
-  const GrowableArrayView<PhaseLCM::NodeData>& _node_data;
+  const GrowableArrayView<BlockScheduler::NodeData>& _node_data;
 
 public:
   SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
-         GrowableArrayView<PhaseLCM::NodeData>& node_data);
+         GrowableArrayView<BlockScheduler::NodeData>& node_data);
   bool contains(const Node* n) const;
   template <class F>
   bool schedule(F random);

@@ -28,43 +28,38 @@
 #include "opto/chaitin.hpp"
 #include "opto/phaselcm.hpp"
 
-static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
-                          GrowableArray<Node*>& scheduled,
-                          GrowableArray<Node*>& begin_nodes, GrowableArray<Node*>& end_nodes,
-                          GrowableArrayView<PhaseLCM::NodeData>& node_data);
-
-static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& scheduled,
-                           GrowableArray<int>& bounds,
-                           const GrowableArrayView<Node*>& livein,
-                           const GrowableArrayView<Node*>& liveout,
-                           GrowableArray<PhaseLCM::NodeData>& node_data);
-
-static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
-                                   GrowableArray<Node*>& scheduled);
-
 static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 
+// Schedule all nodes in a block, the result must conform that:
+// (1)  All nodes (except Phis) must be after their inputs in the block.
+// (2)  All Proj outputs of a node must succeed that node.
+// (3)  All Temp inputs of a node must precede that node.
+// (4)  The block head must be the first node in the block.
+// (5)  Phis must succeed the Proj outputs of the block head (or the block head
+//      if it has no Proj outputs).
+// (6)  The block end node and its outputs are prescheduled at the end of the
+//      block and should not be tampered with since the Proj order represents
+//      the order of the block successors.
+// (7)  A CreateEx must be scheduled at the first possible position after
+//      taking into consideration (1) (2) (4) (5).
+// (8)  A CheckCastPP is similar to a CreateEx but has a lower priority.
+// (9)  A flag input of a node must precede that node after taking into
+//      consideration (2) (3).
+// (10) Due to a bug (read schedule_calls), a Call which has a following Catch
+//      must be scheduled at the last possible position.
+//
+// Algorithm: The operation is done in 4 main steps:
+// (1) Separate the begin nodes (the block head, its Proj outputs, Phis and
+//     Cons), the end nodes (the block end, its flag input and all their
+//     attached Temps and Projs) and the remaining nodes.
+// (2) Schedule the calls in the Block, the Block is now divided into several
+//     regions each of which is scheduled separately. This is done because a
+//     call kills almost everything.
+// (3) Schedule the nodes in each region obtained from above in a way that
+//     attempt to minimize the number of required registers.
+// (4) Fix the position of CreateEx and CheckCastPP to conform the requirements
+//     regarding their positions in the Block.
 bool PhaseLCM::schedule(Block& block) {
-  auto report_failure = [&]() {
-    // Subsuming loads (e.g matching "CmpI (LoadI X) Y" into "cmp [X], Y") may
-    // result in a flag being unable to stick to its use
-    // The exhaustive list of the cases:
-    // - A flag does not belong to the same block as its use, caught in
-    //   collect_nodes
-    // - The flag input of block.end() cannot be scheduled right before it,
-    //   caught in collect_nodes
-    // - A flag and its use are separated by a call, caught in schedule_calls
-    // - A flag and its use belong to the same SBlock, but they cannot be
-    //   scheduled as a whole, which results in a cycle in the dependency graph,
-    //   caught in SBlock::schedule
-    if (C->subsume_loads()) {
-      C->record_failure(C2Compiler::retry_no_subsuming_loads());
-    } else {
-      assert(false, "must be schedulable");
-      C->record_method_not_compilable("local schedule failed");
-    }
-  };
-
   for (uint i = 0; i < block.number_of_nodes(); i++) {
     Node* n = block.get_node(i);
     // A few node types require changing a required edge to a precedence edge
@@ -101,122 +96,28 @@ bool PhaseLCM::schedule(Block& block) {
 
   ResourceMark mark;
 
-  GrowableArray<NodeData> node_data(C->unique());
-  node_data.at_grow(C->unique() - 1);
-  // Schedulable nodes, nodes with different priorities are scheduled later
-  GrowableArray<Node*> scheduled(block.number_of_nodes());
-  // Start, Region and children
-  GrowableArray<Node*> begin_nodes;
-  // MachNull, If, Catch, etc
-  GrowableArray<Node*> end_nodes;
-  bool success = collect_nodes(_cfg, block, scheduled, begin_nodes, end_nodes, node_data);
+  BlockScheduler helper(*C, _cfg, _regalloc, block);
+  bool success = helper.schedule();
   if (!success) {
-    report_failure();
+    // Subsuming loads (e.g matching "CmpI (LoadI X) Y" into "cmp [X], Y") may
+    // result in a flag being unable to precede its use
+    // The exhaustive list of the cases:
+    // - A flag does not belong to the same block as its use, caught in
+    //   collect_nodes
+    // - The flag input of block.end() cannot precede it, caught in
+    //   collect_nodes
+    // - A flag and its use are separated by a call, caught in schedule_calls
+    // - A flag and its use belong to the same SBlock, but they cannot be
+    //   scheduled as a whole, which results in a cycle in the dependency
+    //   graph, caught in SBlock::schedule
+    if (C->subsume_loads()) {
+      C->record_failure(C2Compiler::retry_no_subsuming_loads());
+    } else {
+      assert(false, "must be schedulable");
+      C->record_method_not_compilable("local schedule failed");
+    }
+
     return false;
-  }
-
-  GrowableArray<Node*> livein;
-  GrowableArray<Node*> liveout;
-  if (!StressLCM && OptoRegScheduling) {
-    auto get_live_in_out = [this](GrowableArray<Node*>& list, IndexSet* set) {
-      IndexSetIterator iter(set);
-      while (true) {
-        uint lrg_idx = iter.next();
-        if (lrg_idx == 0) {
-          break;
-        }
-        LRG& lrg = _regalloc.lrgs(lrg_idx);
-        list.append(lrg._def);
-      }
-    };
-
-    PhaseLive* live = _regalloc.get_live();
-    get_live_in_out(livein, live->livein(&block));
-    get_live_in_out(liveout, live->live(&block));
-    for (Node* n : begin_nodes) {
-      livein.append(n);
-    }
-    for (Node* n : end_nodes) {
-      for (uint i = 0; i < n->req(); i++) {
-        Node* in = n->in(i);
-        if (in != nullptr && !end_nodes.contains(in)) {
-          liveout.append_if_missing(in);
-        }
-      }
-    }
-  }
-
-  if (scheduled.length() > 1) {
-    GrowableArray<int> bounds;
-    bool success = schedule_calls(block, scheduled, bounds, livein, liveout, node_data);
-    if (!success) {
-      report_failure();
-      return false;
-    }
-
-#ifndef PRODUCT
-    if (_cfg.trace_opto_pipelining()) {
-      tty->print_cr("# after scheduling calls:");
-      for (int i = 0; i < scheduled.length(); i++) {
-        tty->print("# ");
-        scheduled.at(i)->dump();
-      }
-      tty->print_cr("#");
-    }
-#endif // PRODUCT
-
-    for (int i = 0; i < bounds.length(); i += 2) {
-      int begin = bounds.at(i);
-      int end = bounds.at(i + 1);
-      assert(begin <= end, "");
-      if (end - begin <= 1) {
-        continue;
-      }
-
-      SBlock sblock(scheduled, begin, end, node_data);
-
-#ifndef PRODUCT
-      if (_cfg.trace_opto_pipelining()) {
-        tty->print_cr("# SBlock %d:", i / 2);
-        sblock.dump();
-      }
-#endif // PRODUCT
-
-      auto random = [this]() {
-        return C->random();
-      };
-      bool success = sblock.schedule(random);
-      if (!success) {
-        report_failure();
-        return false;
-      }
-
-#ifndef PRODUCT
-      if (_cfg.trace_opto_pipelining()) {
-        tty->print_cr("# after SBlock %d:", i / 2);
-        for (int i = 0; i < scheduled.length(); i++) {
-          tty->print("# ");
-          scheduled.at(i)->dump();
-        }
-        tty->print_cr("#");
-      }
-#endif // PRODUCT
-    }
-  }
-
-  // Schedule the remaining nodes
-  scheduled.insert_before(0, &begin_nodes);
-  scheduled.appendAll(&end_nodes);
-  assert(checked_cast<int>(block.number_of_nodes()) == scheduled.length(), "");
-
-  // Schedule CreateEx and CheckCastPP as early as possible
-  schedule_special_nodes(_cfg, block, scheduled);
-
-  assert(checked_cast<int>(block.number_of_nodes()) == scheduled.length(), "");
-  // Cannot go all the way to scheduled.length() since we need to preserve the
-  // order of IfTrue and IfFalse
-  for (uint i = 0; i < block.end_idx(); i++) {
-    block.map_node(scheduled.at(i), i);
   }
 
   // Signify the registers that are killed by the calls according to the calling
@@ -240,7 +141,7 @@ bool PhaseLCM::schedule(Block& block) {
 static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
                           GrowableArray<Node*>& scheduled,
                           GrowableArray<Node*>& begin_nodes, GrowableArray<Node*>& end_nodes,
-                          GrowableArrayView<PhaseLCM::NodeData>& node_data) {
+                          GrowableArrayView<BlockScheduler::NodeData>& node_data) {
   // Check if there is a flag that does not belong to the same block as its use
   for (uint idx = 0; idx < block.number_of_nodes(); idx++) {
     Node* n = block.get_node(idx);
@@ -432,472 +333,6 @@ static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
   }
 }
 
-// Schedule all nodes in the basic block starting at start_idx with respects to
-// call nodes. At each iteration, choose one call that can be scheduled first
-// and partition the region into nodes before the call and nodes after.
-// This function assumes that nodes are correctly scheduled with respects to
-// start_idx, i.e. no nodes from start_idx is a direct/indirect predecessor of
-// another node before start_idx.
-static bool schedule_calls_helper(GrowableArrayView<Node*>& scheduled,
-                                  int start_idx, int end_idx,
-                                  GrowableArray<int>& bounds,
-                                  const GrowableArrayView<Node*>& livein,
-                                  const GrowableArrayView<Node*>& liveout,
-                                  GrowableArrayView<PhaseLCM::NodeData>& node_data,
-                                  int vertex_num, GrowableArrayView<double>& graph_edges,
-                                  int src_idx, int snk_idx) {
-  // Find a first call in the interesting region, null if there is none
-  auto find_first_call = [&]() -> Node* {
-    Node* call = nullptr;
-    int call_cnt = 0;
-    for (int i = start_idx; i < end_idx; i++) {
-      Node* n = scheduled.at(i);
-      if (n->is_MachCall() || (n->is_Mach() && n->as_Mach()->has_call())) {
-        call = n;
-        call_cnt++;
-      }
-    }
-    if (call_cnt <= 1) {
-      return call;
-    }
-
-    // Given a call, find a previous call in the interesting region
-    auto find_previous_call = [&](Node* call) -> Node* {
-      Node_List worklist;
-      worklist.push(call);
-      while (worklist.size() > 0) {
-        Node* curr = worklist.pop();
-        for (uint i = 0; i < curr->len(); i++) {
-          Node* in = curr->in(i);
-          if (in == nullptr || node_data.at(in->_idx).idx_in_sched < start_idx) {
-            continue;
-          }
-          if (in->is_MachCall() || (in->is_Mach() && in->as_Mach()->has_call())) {
-            return in;
-          }
-          worklist.push(in);
-        }
-      }
-      return nullptr;
-    };
-
-    while (true) {
-      Node* previous = find_previous_call(call);
-      if (previous == nullptr) {
-        break;
-      }
-      call = previous;
-    }
-
-    return call;
-  };
-
-  auto bfs = [](GrowableArray<int>& prev, GrowableArray<double>& path_weights,
-                int vertex_num, const GrowableArrayView<double>& graph_edges,
-                int source, int sink, GrowableArray<int>& queue) {
-    prev.clear();
-    prev.at_grow(vertex_num - 1, -1);
-    path_weights.clear();
-    path_weights.at_grow(vertex_num - 1, 0);
-    path_weights.at(source) = std::numeric_limits<double>::infinity();
-    queue.clear();
-    queue.append(source);
-    int pos = 0;
-    while (pos < queue.length()) {
-      int curr = queue.at(pos);
-      pos++;
-      for (int i = 0; i < vertex_num; i++) {
-        if (prev.at(i) >= 0) {
-          continue;
-        }
-        double edge_weight = graph_edges.at(curr * vertex_num + i);
-        assert(edge_weight >= 0, "must be");
-        if (edge_weight == 0) {
-          continue;
-        }
-        prev.at(i) = curr;
-        path_weights.at(i) = MIN2(edge_weight, path_weights.at(curr));
-        if (i == sink) {
-          break;
-        }
-        queue.append(i);
-      }
-    }
-  };
-
-  // Problem: Since a call kills everything, we try to minimize the number of
-  // nodes living through the call
-  //
-  // Model:
-  // Each node is represented by 2 vertices, node_in and node_out, the problem
-  // is modelled by a cut partitioning the graph into 2 parts. A node is
-  // scheduled before the call iff the corresponding in-vertex lies in the first
-  // (source) partition, and a node is scheduled after the call iff the
-  // corresponding in-vertex lies in the second (sink) partition.
-  //
-  // The out-vertices represent the liveness of the corresponding nodes. An
-  // out-vertex lies in the first partition cannot be used after the call and
-  // an out-vertex lies in the second partition can be used after the call. As
-  // a result, if an in-vertex lies in the first partition and the out-vertex
-  // lies in the second partition, the corresponding node needs to be spilt
-  // before the call.
-  //
-  // In conclusion, the problem can be modelled as a minimum-cut problem.
-
-  Node* call = find_first_call();
-  if (call == nullptr) {
-    return true;
-  }
-
-  // Construct the graph
-  assert(vertex_num * vertex_num == graph_edges.length(), "");
-  for (int i = 0; i < graph_edges.length(); i++) {
-    graph_edges.at(i) = 0;
-  }
-  // Live-in nodes
-  for (Node* n : livein) {
-    int n_idx = node_data.at(n->_idx).vertex_idx;
-    assert(n_idx != -1, "");
-    int edge_idx = src_idx * vertex_num + n_idx;
-    graph_edges.at(edge_idx) = std::numeric_limits<double>::infinity();
-  }
-  // Live-out nodes
-  for (Node* n : liveout) {
-    int n_idx = node_data.at(n->_idx).vertex_idx;
-    if (n_idx == -1) {
-      continue;
-    }
-    int edge_idx = (n_idx + 1) * vertex_num + snk_idx;
-    graph_edges.at(edge_idx) = std::numeric_limits<double>::infinity();
-  }
-  // The call must be in the first partition
-  int call_idx = node_data.at(call->_idx).vertex_idx;
-  assert(call_idx != -1, "");
-  int call_in = src_idx * vertex_num + call_idx;
-  graph_edges.at(call_in) = std::numeric_limits<double>::infinity();
-  // All successors of the call must be in the second partition
-  for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
-    Node* out = call->fast_out(i);
-    if (out->is_Phi()) {
-      // A Phi in another block does not care, a Phi in this block goes backward
-      // to the start of the block
-      continue;
-    }
-    int out_idx = node_data.at(out->_idx).vertex_idx;
-    if (out_idx == -1) {
-      continue;
-    }
-    int call_out = out_idx * vertex_num + snk_idx;
-    graph_edges.at(call_out) = std::numeric_limits<double>::infinity();
-  }
-
-  for (int i = start_idx; i < end_idx; i++) {
-    Node* n = scheduled.at(i);
-    int n_idx = node_data.at(n->_idx).vertex_idx;
-    assert(n_idx != -1, "");
-    // in cannot be after out
-    int back_edge = (n_idx + 1) * vertex_num + n_idx;
-    graph_edges.at(back_edge) = std::numeric_limits<double>::infinity();
-    // Spill value
-    if (n != call) {
-      int forward_edge = n_idx * vertex_num + n_idx + 1;
-      double spill_value;
-      if (n->is_Mach() && must_clone[n->as_Mach()->ideal_Opcode()]) {
-        // Flag cannot be spilt
-        spill_value = std::numeric_limits<double>::infinity();
-      } else {
-        spill_value = SUnit::Pressure(n).total_pressure();
-      }
-      graph_edges.at(forward_edge) = spill_value;
-    }
-    // Other calls must be in the second partition
-    if (n != call &&
-        (n->is_MachCall() || (n->is_Mach() && n->as_Mach()->has_call()))) {
-      int call_edge = n_idx * vertex_num + snk_idx;
-      graph_edges.at(call_edge) = std::numeric_limits<double>::infinity();
-    }
-
-    for (uint i = 0; i < n->len(); i++) {
-      Node* in = n->in(i);
-      if (in == nullptr) {
-        continue;
-      }
-      int in_idx = node_data.at(in->_idx).vertex_idx;
-      if (in_idx == -1) {
-        continue;
-      }
-
-      // A node cannot be scheduled before its predecessors
-      int dep_edge = n_idx * vertex_num + in_idx;
-      graph_edges.at(dep_edge) = std::numeric_limits<double>::infinity();
-      // If a required successor is after the call, then the out-vertex of the
-      // node must be in the second partition
-      if (i < n->req()) {
-        int use_edge = (in_idx + 1) * vertex_num + n_idx;
-        graph_edges.at(use_edge) = std::numeric_limits<double>::infinity();
-      }
-      // A Proj cannot be separate from its predecessors except when the main
-      // node is the call we are scheduling
-      if (in != call && n->is_Proj()) {
-        int dep_edge = in_idx * vertex_num + n_idx;
-        graph_edges.at(dep_edge) = std::numeric_limits<double>::infinity();
-      }
-      // A MachTemp cannot be separated from its successor
-      if (in->is_MachTemp()) {
-        int dep_edge = in_idx * vertex_num + n_idx;
-        graph_edges.at(dep_edge) = std::numeric_limits<double>::infinity();
-      }
-    }
-  }
-
-  // Ford-Fulkerson algorithm
-  GrowableArray<int> prev(vertex_num);
-  GrowableArray<double> path_weights(vertex_num);
-  GrowableArray<int> queue;
-  while (true) {
-    bfs(prev, path_weights, vertex_num, graph_edges, src_idx, snk_idx, queue);
-    if (prev.at(snk_idx) == -1) {
-      break;
-    }
-
-    double weight = path_weights.at(snk_idx);
-    // Unschedulable (a flag cannot go with its use)
-    if (weight == std::numeric_limits<double>::infinity()) {
-      return false;
-    }
-    for (int second = snk_idx, first = -1; second != src_idx; second = first) {
-      first = prev.at(second);
-      graph_edges.at(first * vertex_num + second) -= weight;
-      graph_edges.at(second * vertex_num + first) += weight;
-    }
-  }
-
-  // No sink, just find the connected component
-  bfs(prev, path_weights, vertex_num, graph_edges, src_idx, -1, queue);
-
-  GrowableArray<Node*> new_scheduled(end_idx - start_idx);
-  for (int i = 0; i < start_idx; i++) {
-    new_scheduled.append(scheduled.at(i));
-  }
-  for (int i = start_idx; i < end_idx; i++) {
-    Node* n = scheduled.at(i);
-    if (n == call) {
-      continue;
-    }
-    int idx = node_data.at(n->_idx).vertex_idx;
-    if (prev.at(idx) != -1) {
-      new_scheduled.append(n);
-    }
-  }
-
-  // Schedule the call
-  int temp_num = 0;
-  for (uint i = 0; i < call->req(); i++) {
-    Node* in = call->in(i);
-    if (in != nullptr && in->is_MachTemp()) {
-      assert(prev.at(node_data.at(in->_idx).vertex_idx) != -1, "");
-      temp_num++;
-      new_scheduled.remove(in);
-      new_scheduled.append(in);
-    }
-  }
-  GrowableArray<Node*> next_livein;
-  bounds.append(new_scheduled.length() - temp_num);
-  new_scheduled.append(call);
-  next_livein.append(call);
-  for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
-    Node* out = call->fast_out(i);
-    if (out->is_Proj()) {
-      new_scheduled.append(out);
-      next_livein.append(out);
-      // Set to an arbitrary value so that we know which node has not been added
-      int out_idx = node_data.at(out->_idx).vertex_idx;
-      prev.at(out_idx) = 0;
-    }
-  }
-
-  int next_start_idx = new_scheduled.length();
-  bounds.append(next_start_idx);
-  for (int i = start_idx; i < end_idx; i++) {
-    Node* n = scheduled.at(i);
-    int n_idx = node_data.at(n->_idx).vertex_idx;
-    if (prev.at(n_idx) == -1) {
-      new_scheduled.append(n);
-    }
-  }
-  assert(new_scheduled.length() == end_idx, "");
-  for (int i = start_idx; i < end_idx; i++) {
-    Node* n = new_scheduled.at(i);
-    scheduled.at(i) = n;
-    node_data.at(n->_idx).idx_in_sched = i;
-  }
-
-  return schedule_calls_helper(scheduled, next_start_idx, end_idx,
-                               bounds, next_livein, liveout, node_data,
-                               vertex_num, graph_edges, src_idx, snk_idx);
-}
-
-static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& scheduled,
-                           GrowableArray<int>& bounds,
-                           const GrowableArrayView<Node*>& livein,
-                           const GrowableArrayView<Node*>& liveout,
-                           GrowableArray<PhaseLCM::NodeData>& node_data) {
-  int vertex_num = 0;
-  for (int i = 0; i < scheduled.length(); i++) {
-    Node* n = scheduled.at(i);
-    assert(node_data.at(n->_idx).idx_in_sched == i, "");
-    node_data.at(n->_idx).vertex_idx = vertex_num;
-    vertex_num += 2;
-  }
-  int src_idx = vertex_num;
-  int snk_idx = vertex_num + 1;
-  vertex_num += 2;
-  for (Node* n : livein) {
-    node_data.at(n->_idx).vertex_idx = vertex_num;
-    vertex_num += 2;
-  }
-
-  GrowableArray<double> graph_edges(vertex_num * vertex_num);
-  graph_edges.at_grow(vertex_num * vertex_num - 1);
-  bounds.clear();
-
-  Node* end = block.end();
-  if (end->is_Catch()) {
-    // The block is dishonest, there can be no nodes between a CatchNode and its
-    // corresponding call. This is fixed after LCM but the code there does not
-    // take into consideration that derived pointers must go with their bases.
-    // We try to avoid this bug by scheduling all nodes before the call except
-    // those which depend on the call.
-    // TODO: PROPERLY FIX THE ISSUE
-    GrowableArray<Node*> worklist(scheduled.length());
-    Node* call = end->in(0)->in(0);
-    int &call_idx = node_data.at(call->_idx).idx_in_sched;
-    call_idx = -1;
-    worklist.append(call);
-    while (!worklist.is_empty()) {
-      int idx = worklist.length() - 1;
-      Node* curr = worklist.at(idx);
-      worklist.remove_at(idx);
-      for (DUIterator_Fast imax, i = curr->fast_outs(imax); i < imax; i++) {
-        Node* out = curr->fast_out(i);
-        if (out == call) {
-          // Cycle
-          return false;
-        }
-        int& out_idx = node_data.at(out->_idx).idx_in_sched;
-        if (out_idx != -1) {
-          out_idx = -1;
-          worklist.append(out);
-        }
-      }
-      for (uint i = 0; i < curr->req(); i++) {
-        Node* in = curr->in(i);
-        if (in == nullptr) {
-          continue;
-        }
-        if (in->is_MachTemp() ||
-            (in->is_Mach() && must_clone[in->as_Mach()->ideal_Opcode()])) {
-          int& in_idx = node_data.at(in->_idx).idx_in_sched;
-          if (in_idx != -1) {
-            in_idx = -1;
-            worklist.append(in);
-          }
-        }
-      }
-    }
-
-    // Use worklist to store new_scheduled
-    worklist.clear();
-    for (Node* n : scheduled) {
-      int& idx = node_data.at(n->_idx).idx_in_sched;
-      if (idx >= 0) {
-        idx = worklist.length();
-        worklist.append(n);
-      }
-    }
-
-#ifdef ASSERT
-    for (uint i = 0; i < call->req(); i++) {
-      Node* in = call->in(i);
-      assert(in == nullptr || !in->is_MachTemp(),
-             "A call should not have MachTemp inputs");
-    }
-#endif // ASSERT
-    call_idx = worklist.length();
-    worklist.append(call);
-    for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
-      Node* out = call->fast_out(i);
-      if (out->is_Proj()) {
-        node_data.at(out->_idx).idx_in_sched = worklist.length();
-        worklist.append(out);
-      }
-    }
-    int after_call_idx = worklist.length();
-    for (Node* n : scheduled) {
-      int& idx = node_data.at(n->_idx).idx_in_sched;
-      if (idx == -1) {
-        idx = worklist.length();
-        worklist.append(n);
-      }
-    }
-
-    assert(worklist.length() == scheduled.length(), "");
-    for (int i = 0; i < scheduled.length(); i++) {
-      scheduled.at(i) = worklist.at(i);
-    }
-
-    // Now use worklist to store live nodes information
-    worklist.clear();
-    for (uint i = 0; i < call->req(); i++) {
-      Node* in = call->in(i);
-      if (in != nullptr) {
-        worklist.append(in);
-      }
-    }
-
-    bounds.append(0);
-    bool success = true;
-    if (!StressLCM && OptoRegScheduling) {
-      success = schedule_calls_helper(scheduled, 0, call_idx,
-                                      bounds, livein, worklist, node_data,
-                                      vertex_num, graph_edges, src_idx, snk_idx);
-    }
-    if (!success) {
-      return false;
-    }
-
-    bounds.append(call_idx);
-
-    worklist.clear();
-    worklist.append(call);
-    for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
-      Node* out = call->fast_out(i);
-      if (out->is_Proj()) {
-        worklist.append(out);
-      }
-    }
-    bounds.append(after_call_idx);
-
-    if (!StressLCM && OptoRegScheduling) {
-      success = schedule_calls_helper(scheduled, after_call_idx, scheduled.length(),
-                                      bounds, worklist, liveout, node_data,
-                                      vertex_num, graph_edges, src_idx, snk_idx);
-    }
-    bounds.append(scheduled.length());
-    return success;
-  } else {
-    bounds.append(0);
-    bool success = true;
-    if (!StressLCM && OptoRegScheduling) {
-      success = schedule_calls_helper(scheduled, 0, scheduled.length(),
-                                      bounds, livein, liveout, node_data,
-                                      vertex_num, graph_edges, src_idx, snk_idx);
-    }
-    bounds.append(scheduled.length());
-    return success;
-  }
-}
-
 static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block) {
   // Fill in the kill mask for the call
   auto add_call_kills = [](MachProjNode *proj, RegMask& regs,
@@ -995,8 +430,596 @@ static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block) 
   }
 }
 
+BlockScheduler::BlockScheduler(Compile& C, const PhaseCFG& cfg,
+                               PhaseChaitin& regalloc, Block& block)
+  : C(C), _cfg(cfg), _regalloc(regalloc), _block(block),
+    _scheduled(block.number_of_nodes()), _node_data(C.unique()) {
+  _node_data.at_grow(C.unique() - 1);
+}
+
+bool BlockScheduler::schedule() {
+  bool success = collect_nodes(_cfg, _block, _scheduled, _begin_nodes, _end_nodes, _node_data);
+  if (!success) {
+    return false;
+  }
+
+  if (_scheduled.length() > 1) {
+    success = do_schedule();
+    if (!success) {
+      return false;
+    }
+  }
+
+  // Schedule the remaining nodes
+  _scheduled.insert_before(0, &_begin_nodes);
+  _scheduled.appendAll(&_end_nodes);
+  assert(checked_cast<int>(_block.number_of_nodes()) == _scheduled.length(), "");
+
+  // Schedule CreateEx and CheckCastPP as early as possible
+  schedule_special_nodes(_cfg, _block, _scheduled);
+
+  assert(checked_cast<int>(_block.number_of_nodes()) == _scheduled.length(), "");
+  // Cannot go all the way to scheduled.length() since we need to preserve the
+  // order of IfTrue and IfFalse
+  for (uint i = 0; i < _block.end_idx(); i++) {
+    _block.map_node(_scheduled.at(i), i);
+  }
+  return true;
+}
+
+bool BlockScheduler::do_schedule() {
+  bool has_call = false;
+  for (Node* n : _scheduled) {
+    if (n->is_MachCall() || (n->is_Mach() && n->as_Mach()->has_call())) {
+      has_call = true;
+      break;
+    }
+  }
+
+  if (has_call) {
+    auto get_live_in_out = [&](GrowableArray<Node*>& list, IndexSet* set) {
+      IndexSetIterator iter(set);
+      while (true) {
+        uint lrg_idx = iter.next();
+        if (lrg_idx == 0) {
+          break;
+        }
+        LRG& lrg = _regalloc.lrgs(lrg_idx);
+        list.append(lrg._def);
+      }
+    };
+
+    GrowableArray<Node*> livein;
+    GrowableArray<Node*> liveout;
+    if (!StressLCM && OptoRegScheduling) {
+      PhaseLive* live = _regalloc.get_live();
+      get_live_in_out(livein, live->livein(&_block));
+      get_live_in_out(liveout, live->live(&_block));
+      for (Node* n : _begin_nodes) {
+        livein.append(n);
+      }
+      for (Node* n : _end_nodes) {
+        for (uint i = 0; i < n->req(); i++) {
+          Node* in = n->in(i);
+          if (in != nullptr && !_end_nodes.contains(in)) {
+            liveout.append_if_missing(in);
+          }
+        }
+      }
+    }
+
+    bool success = schedule_calls(livein, liveout);
+    if (!success) {
+      return false;
+    }
+
+#ifndef PRODUCT
+    if (_cfg.trace_opto_pipelining()) {
+      tty->print_cr("# after scheduling calls:");
+      for (int i = 0; i < _scheduled.length(); i++) {
+        tty->print("# ");
+        _scheduled.at(i)->dump();
+      }
+      tty->print_cr("#");
+    }
+#endif // PRODUCT
+  } else {
+    _bounds.append(0);
+    _bounds.append(_scheduled.length());
+  }
+
+  assert(_bounds.length() % 2 == 0, "");
+  for (int i = 0; i < _bounds.length(); i += 2) {
+    int begin = _bounds.at(i);
+    int end = _bounds.at(i + 1);
+    assert(begin <= end, "");
+    if (end - begin <= 1) {
+      continue;
+    }
+
+    SBlock sblock(_scheduled, begin, end, _node_data);
+
+#ifndef PRODUCT
+    if (_cfg.trace_opto_pipelining()) {
+      tty->print_cr("# SBlock %d:", i / 2);
+      sblock.dump();
+    }
+#endif // PRODUCT
+
+    auto random = [&]() {
+      return C.random();
+    };
+    bool success = sblock.schedule(random);
+    if (!success) {
+      return false;
+    }
+
+#ifndef PRODUCT
+    if (_cfg.trace_opto_pipelining()) {
+      tty->print_cr("# after SBlock %d:", i / 2);
+      for (int i = 0; i < _scheduled.length(); i++) {
+        tty->print("# ");
+        _scheduled.at(i)->dump();
+      }
+      tty->print_cr("#");
+    }
+#endif // PRODUCT
+  }
+  return true;
+}
+
+bool BlockScheduler::schedule_calls(const GrowableArrayView<Node*>& livein,
+                                    const GrowableArrayView<Node*>& liveout) {
+  int vertex_num = 0;
+  for (int i = 0; i < _scheduled.length(); i++) {
+    Node* n = _scheduled.at(i);
+    assert(_node_data.at(n->_idx).idx_in_sched == i, "");
+    _node_data.at(n->_idx).vertex_idx = vertex_num;
+    vertex_num += 2;
+  }
+  _src_idx = vertex_num;
+  _snk_idx = vertex_num + 1;
+  vertex_num += 2;
+  for (Node* n : livein) {
+    _node_data.at(n->_idx).vertex_idx = vertex_num;
+    vertex_num += 2;
+  }
+
+  _vertex_num = vertex_num;
+  _graph_edges.at_grow(vertex_num * vertex_num - 1);
+  _bounds.clear();
+
+  Node* end = _block.end();
+  if (end->is_Catch()) {
+    // The block is dishonest, there can be no nodes between a CatchNode and its
+    // corresponding call. This is fixed after LCM but the code there does not
+    // take into consideration that derived pointers must go with their bases.
+    // We try to avoid this bug by scheduling all nodes before the call except
+    // those which depend on the call.
+    // TODO: PROPERLY FIX THE ISSUE
+    GrowableArray<Node*> worklist(_scheduled.length());
+    Node* call = end->in(0)->in(0);
+    int &call_idx = _node_data.at(call->_idx).idx_in_sched;
+    call_idx = -1;
+    worklist.append(call);
+    while (!worklist.is_empty()) {
+      int idx = worklist.length() - 1;
+      Node* curr = worklist.at(idx);
+      worklist.remove_at(idx);
+      for (DUIterator_Fast imax, i = curr->fast_outs(imax); i < imax; i++) {
+        Node* out = curr->fast_out(i);
+        if (out == call) {
+          // Cycle
+          return false;
+        }
+        int& out_idx = _node_data.at(out->_idx).idx_in_sched;
+        if (out_idx != -1) {
+          out_idx = -1;
+          worklist.append(out);
+        }
+      }
+      for (uint i = 0; i < curr->req(); i++) {
+        Node* in = curr->in(i);
+        if (in == nullptr) {
+          continue;
+        }
+        if (in->is_MachTemp() ||
+            (in->is_Mach() && must_clone[in->as_Mach()->ideal_Opcode()])) {
+          int& in_idx = _node_data.at(in->_idx).idx_in_sched;
+          if (in_idx != -1) {
+            in_idx = -1;
+            worklist.append(in);
+          }
+        }
+      }
+    }
+
+    // Use worklist to store new_scheduled
+    worklist.clear();
+    for (Node* n : _scheduled) {
+      int& idx = _node_data.at(n->_idx).idx_in_sched;
+      if (idx >= 0) {
+        idx = worklist.length();
+        worklist.append(n);
+      }
+    }
+
+#ifdef ASSERT
+    for (uint i = 0; i < call->req(); i++) {
+      Node* in = call->in(i);
+      assert(in == nullptr || !in->is_MachTemp(),
+             "A MachCall should not have MachTemp inputs");
+    }
+#endif // ASSERT
+    call_idx = worklist.length();
+    worklist.append(call);
+    for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
+      Node* out = call->fast_out(i);
+      if (out->is_Proj()) {
+        _node_data.at(out->_idx).idx_in_sched = worklist.length();
+        worklist.append(out);
+      }
+    }
+    int after_call_idx = worklist.length();
+    for (Node* n : _scheduled) {
+      int& idx = _node_data.at(n->_idx).idx_in_sched;
+      if (idx == -1) {
+        idx = worklist.length();
+        worklist.append(n);
+      }
+    }
+
+    assert(worklist.length() == _scheduled.length(), "");
+    for (int i = 0; i < _scheduled.length(); i++) {
+      _scheduled.at(i) = worklist.at(i);
+    }
+
+    // Now use worklist to store live nodes information
+    worklist.clear();
+    for (uint i = 0; i < call->req(); i++) {
+      Node* in = call->in(i);
+      if (in != nullptr) {
+        worklist.append(in);
+      }
+    }
+
+    _bounds.append(0);
+    bool success = true;
+    if (!StressLCM && OptoRegScheduling) {
+      success = schedule_calls_helper(0, call_idx, livein, worklist);
+    }
+    if (!success) {
+      return false;
+    }
+
+    _bounds.append(call_idx);
+
+    worklist.clear();
+    worklist.append(call);
+    for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
+      Node* out = call->fast_out(i);
+      if (out->is_Proj()) {
+        worklist.append(out);
+      }
+    }
+    _bounds.append(after_call_idx);
+
+    if (!StressLCM && OptoRegScheduling) {
+      success = schedule_calls_helper(after_call_idx, _scheduled.length(),
+                                      worklist, liveout);
+    }
+    _bounds.append(_scheduled.length());
+    return success;
+  } else {
+    _bounds.append(0);
+    bool success = true;
+    if (!StressLCM && OptoRegScheduling) {
+      success = schedule_calls_helper(0, _scheduled.length(), livein, liveout);
+    }
+    _bounds.append(_scheduled.length());
+    return success;
+  }
+}
+
+// Schedule all nodes in the basic block starting at start_idx with respects to
+// call nodes. At each iteration, choose one call that can be scheduled first
+// and partition the region into nodes before the call and nodes after.
+// This function assumes that nodes are correctly scheduled with respects to
+// start_idx, i.e. no nodes from start_idx is a direct/indirect predecessor of
+// another node before start_idx.
+bool BlockScheduler::schedule_calls_helper(int start_idx, int end_idx,
+                                           const GrowableArrayView<Node*>& livein,
+                                           const GrowableArrayView<Node*>& liveout) {
+  // Find a first call in the interesting region, null if there is none
+  auto find_first_call = [&]() -> Node* {
+    Node* call = nullptr;
+    int call_cnt = 0;
+    for (int i = start_idx; i < end_idx; i++) {
+      Node* n = _scheduled.at(i);
+      if (n->is_MachCall() || (n->is_Mach() && n->as_Mach()->has_call())) {
+        call = n;
+        call_cnt++;
+      }
+    }
+    if (call_cnt <= 1) {
+      return call;
+    }
+
+    // Given a call, find a previous call in the interesting region
+    auto find_previous_call = [&](Node* call) -> Node* {
+      Node_List worklist;
+      worklist.push(call);
+      while (worklist.size() > 0) {
+        Node* curr = worklist.pop();
+        for (uint i = 0; i < curr->len(); i++) {
+          Node* in = curr->in(i);
+          if (in == nullptr || _node_data.at(in->_idx).idx_in_sched < start_idx) {
+            continue;
+          }
+          if (in->is_MachCall() || (in->is_Mach() && in->as_Mach()->has_call())) {
+            return in;
+          }
+          worklist.push(in);
+        }
+      }
+      return nullptr;
+    };
+
+    while (true) {
+      Node* previous = find_previous_call(call);
+      if (previous == nullptr) {
+        break;
+      }
+      call = previous;
+    }
+
+    return call;
+  };
+
+  auto bfs = [&](GrowableArray<int>& prev, GrowableArray<double>& path_weights,
+                 GrowableArray<int>& queue, bool find_path) {
+    prev.clear();
+    prev.at_grow(_vertex_num - 1, -1);
+    path_weights.clear();
+    path_weights.at_grow(_vertex_num - 1, 0);
+    path_weights.at(_src_idx) = std::numeric_limits<double>::infinity();
+    queue.clear();
+    queue.append(_src_idx);
+    int pos = 0;
+    while (pos < queue.length()) {
+      int curr = queue.at(pos);
+      pos++;
+      for (int i = 0; i < _vertex_num; i++) {
+        if (prev.at(i) >= 0) {
+          continue;
+        }
+        double edge_weight = _graph_edges.at(curr * _vertex_num + i);
+        assert(edge_weight >= 0, "must be");
+        if (edge_weight == 0) {
+          continue;
+        }
+        prev.at(i) = curr;
+        path_weights.at(i) = MIN2(edge_weight, path_weights.at(curr));
+        if (find_path && i == _snk_idx) {
+          break;
+        }
+        queue.append(i);
+      }
+    }
+  };
+
+  // Problem: Since a call kills everything, we try to minimize the number of
+  // nodes living through the call
+  //
+  // Model:
+  // Each node is represented by 2 vertices, node_in and node_out, the problem
+  // is modelled by a cut partitioning the graph into 2 parts. A node is
+  // scheduled before the call iff the corresponding in-vertex lies in the first
+  // (source) partition, and a node is scheduled after the call iff the
+  // corresponding in-vertex lies in the second (sink) partition.
+  //
+  // The out-vertices represent the liveness of the corresponding nodes. An
+  // out-vertex lies in the first partition cannot be used after the call and
+  // an out-vertex lies in the second partition can be used after the call. As
+  // a result, if an in-vertex lies in the first partition and the out-vertex
+  // lies in the second partition, the corresponding node needs to be spilt
+  // before the call.
+  //
+  // In conclusion, the problem can be modelled as a minimum-cut problem.
+
+  Node* call = find_first_call();
+  if (call == nullptr) {
+    return true;
+  }
+
+  // Construct the graph
+  assert(_vertex_num * _vertex_num == _graph_edges.length(), "");
+  for (int i = 0; i < _graph_edges.length(); i++) {
+    _graph_edges.at(i) = 0;
+  }
+  // Live-in nodes
+  for (Node* n : livein) {
+    int n_idx = _node_data.at(n->_idx).vertex_idx;
+    assert(n_idx != -1, "");
+    int edge_idx = _src_idx * _vertex_num + n_idx;
+    _graph_edges.at(edge_idx) = std::numeric_limits<double>::infinity();
+  }
+  // Live-out nodes
+  for (Node* n : liveout) {
+    int n_idx = _node_data.at(n->_idx).vertex_idx;
+    if (n_idx == -1) {
+      continue;
+    }
+    int edge_idx = (n_idx + 1) * _vertex_num + _snk_idx;
+    _graph_edges.at(edge_idx) = std::numeric_limits<double>::infinity();
+  }
+  // The call must be in the first partition
+  int call_idx = _node_data.at(call->_idx).vertex_idx;
+  assert(call_idx != -1, "");
+  int call_in = _src_idx * _vertex_num + call_idx;
+  _graph_edges.at(call_in) = std::numeric_limits<double>::infinity();
+  // All successors of the call must be in the second partition
+  for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
+    Node* out = call->fast_out(i);
+    if (out->is_Phi()) {
+      // A Phi in another block does not care, a Phi in this block goes backward
+      // to the start of the block
+      continue;
+    }
+    int out_idx = _node_data.at(out->_idx).vertex_idx;
+    if (out_idx == -1) {
+      continue;
+    }
+    int call_out = out_idx * _vertex_num + _snk_idx;
+    _graph_edges.at(call_out) = std::numeric_limits<double>::infinity();
+  }
+
+  for (int i = start_idx; i < end_idx; i++) {
+    Node* n = _scheduled.at(i);
+    int n_idx = _node_data.at(n->_idx).vertex_idx;
+    assert(n_idx != -1, "");
+    // in cannot be after out
+    int back_edge = (n_idx + 1) * _vertex_num + n_idx;
+    _graph_edges.at(back_edge) = std::numeric_limits<double>::infinity();
+    // Spill value
+    if (n != call) {
+      int forward_edge = n_idx * _vertex_num + n_idx + 1;
+      double spill_value;
+      if (n->is_Mach() && must_clone[n->as_Mach()->ideal_Opcode()]) {
+        // Flag cannot be spilt
+        spill_value = std::numeric_limits<double>::infinity();
+      } else {
+        spill_value = SUnit::Pressure(n).total_pressure();
+      }
+      _graph_edges.at(forward_edge) = spill_value;
+    }
+    // Other calls must be in the second partition
+    if (n != call &&
+        (n->is_MachCall() || (n->is_Mach() && n->as_Mach()->has_call()))) {
+      int call_edge = n_idx * _vertex_num + _snk_idx;
+      _graph_edges.at(call_edge) = std::numeric_limits<double>::infinity();
+    }
+
+    for (uint i = 0; i < n->len(); i++) {
+      Node* in = n->in(i);
+      if (in == nullptr) {
+        continue;
+      }
+      int in_idx = _node_data.at(in->_idx).vertex_idx;
+      if (in_idx == -1) {
+        continue;
+      }
+
+      // A node cannot be scheduled before its predecessors
+      int dep_edge = n_idx * _vertex_num + in_idx;
+      _graph_edges.at(dep_edge) = std::numeric_limits<double>::infinity();
+      // If a required successor is after the call, then the out-vertex of the
+      // node must be in the second partition
+      if (i < n->req()) {
+        int use_edge = (in_idx + 1) * _vertex_num + n_idx;
+        _graph_edges.at(use_edge) = std::numeric_limits<double>::infinity();
+      }
+      // A Proj cannot be separate from its predecessors except when the main
+      // node is the call we are scheduling
+      if (in != call && n->is_Proj()) {
+        int dep_edge = in_idx * _vertex_num + n_idx;
+        _graph_edges.at(dep_edge) = std::numeric_limits<double>::infinity();
+      }
+      // A MachTemp cannot be separated from its successor
+      if (in->is_MachTemp()) {
+        int dep_edge = in_idx * _vertex_num + n_idx;
+        _graph_edges.at(dep_edge) = std::numeric_limits<double>::infinity();
+      }
+    }
+  }
+
+  // Ford-Fulkerson algorithm
+  GrowableArray<int> prev(_vertex_num);
+  GrowableArray<double> path_weights(_vertex_num);
+  GrowableArray<int> queue;
+  while (true) {
+    bfs(prev, path_weights, queue, true);
+    if (prev.at(_snk_idx) == -1) {
+      break;
+    }
+
+    double weight = path_weights.at(_snk_idx);
+    // Unschedulable (a flag cannot go with its use)
+    if (weight == std::numeric_limits<double>::infinity()) {
+      return false;
+    }
+    for (int second = _snk_idx, first = -1; second != _src_idx; second = first) {
+      first = prev.at(second);
+      _graph_edges.at(first * _vertex_num + second) -= weight;
+      _graph_edges.at(second * _vertex_num + first) += weight;
+    }
+  }
+
+  // No sink, just find the connected component
+  bfs(prev, path_weights, queue, false);
+
+  GrowableArray<Node*> new_scheduled(end_idx - start_idx);
+  for (int i = 0; i < start_idx; i++) {
+    new_scheduled.append(_scheduled.at(i));
+  }
+  for (int i = start_idx; i < end_idx; i++) {
+    Node* n = _scheduled.at(i);
+    if (n == call) {
+      continue;
+    }
+    int idx = _node_data.at(n->_idx).vertex_idx;
+    if (prev.at(idx) != -1) {
+      new_scheduled.append(n);
+    }
+  }
+
+  // Schedule the call
+  int temp_num = 0;
+  for (uint i = 0; i < call->req(); i++) {
+    Node* in = call->in(i);
+    if (in != nullptr && in->is_MachTemp()) {
+      assert(prev.at(_node_data.at(in->_idx).vertex_idx) != -1, "");
+      temp_num++;
+      new_scheduled.remove(in);
+      new_scheduled.append(in);
+    }
+  }
+  GrowableArray<Node*> next_livein;
+  _bounds.append(new_scheduled.length() - temp_num);
+  new_scheduled.append(call);
+  next_livein.append(call);
+  for (DUIterator_Fast imax, i = call->fast_outs(imax); i < imax; i++) {
+    Node* out = call->fast_out(i);
+    if (out->is_Proj()) {
+      new_scheduled.append(out);
+      next_livein.append(out);
+      // Set to an arbitrary value so that we know which node has not been added
+      int out_idx = _node_data.at(out->_idx).vertex_idx;
+      prev.at(out_idx) = 0;
+    }
+  }
+
+  int next_start_idx = new_scheduled.length();
+  _bounds.append(next_start_idx);
+  for (int i = start_idx; i < end_idx; i++) {
+    Node* n = _scheduled.at(i);
+    int n_idx = _node_data.at(n->_idx).vertex_idx;
+    if (prev.at(n_idx) == -1) {
+      new_scheduled.append(n);
+    }
+  }
+  assert(new_scheduled.length() == end_idx, "");
+  for (int i = start_idx; i < end_idx; i++) {
+    Node* n = new_scheduled.at(i);
+    _scheduled.at(i) = n;
+    _node_data.at(n->_idx).idx_in_sched = i;
+  }
+
+  return schedule_calls_helper(next_start_idx, end_idx, next_livein, liveout);
+}
+
 SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
-               GrowableArrayView<PhaseLCM::NodeData>& node_data)
+               GrowableArrayView<BlockScheduler::NodeData>& node_data)
   : _scheduled(scheduled), _start_idx(start_idx), _end_idx(end_idx),
     _sink(nullptr), _node_data(node_data) {
   for (int i = start_idx; i < end_idx; i++) {
@@ -1066,7 +1089,7 @@ bool SBlock::contains(const Node* n) const {
   return idx >= _start_idx && idx < _end_idx;
 }
 
-SUnit::SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
+SUnit::SUnit(Node* n, GrowableArrayView<BlockScheduler::NodeData>& node_data
 #ifdef ASSERT
            , int start_idx, int end_idx
 #endif // ASSERT
@@ -1099,7 +1122,8 @@ SUnit::SUnit(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
   }
 }
 
-SUnit* SUnit::try_create(Node* n, GrowableArrayView<PhaseLCM::NodeData>& node_data
+// Grab a node and all others that need to stick with it (Temps, Projs, flag)
+SUnit* SUnit::try_create(Node* n, GrowableArrayView<BlockScheduler::NodeData>& node_data
 #ifdef ASSERT
                        , int start_idx, int end_idx
 #endif // ASSERT
@@ -1172,9 +1196,15 @@ SUnit* SUnit::create_sink(const SBlock& block, const GrowableArrayView<SUnit*>& 
   return sink;
 }
 
+// Calculate the Sethi-Ullman value of an SUnit and sort the predecessor list
+// in a way that the unit that appear earlier will be scheduled first in the
+// block. This is only an approximation that does not take into consideration
+// common expressions, which means that it may not provide the optimal results.
 template <class F>
 static SUnit::Pressure calculate_input_sethi_ullman(SUnit::SDep** inputs, int n,
                                                     F sethi_ullman_getter) {
+  // For sufficiently small input size, we do an exhaustive search, otherwise
+  // just put the input with the largest Sethi-Ullman value first
   assert(n > 0, "");
   constexpr int max_exhaustive = 6;
   if (n == 1) {
@@ -1235,6 +1265,7 @@ void SUnit::calculate_sethi_ullman_numbers(SUnit* root) {
       continue;
     }
 
+    // Set to calculating to avoid infinite recursion caused by cycles
     curr->_sethi_ullman = SethiUllmanStatus::calculating;
     bool wait_for_input = false;
     for (SDep* dep : curr->_preds) {
@@ -1286,7 +1317,7 @@ void SUnit::calculate_sethi_ullman_numbers(SUnit* root) {
 }
 
 void SUnit::add_predecessors(const SBlock& block,
-                             const GrowableArrayView<PhaseLCM::NodeData>& node_data) {
+                             const GrowableArrayView<BlockScheduler::NodeData>& node_data) {
   GrowableArray<const Node*> input_nodes;
   for (const Node* n : _nodes) {
     assert(block.contains(n), "");
