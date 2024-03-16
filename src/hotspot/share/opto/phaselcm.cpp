@@ -40,7 +40,7 @@ static bool schedule_calls(const Block& block, GrowableArrayView<Node*>& schedul
                            GrowableArray<PhaseLCM::NodeData>& node_data);
 
 static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
-                                   GrowableArray<Node*>& scheduled, int begin_idx);
+                                   GrowableArray<Node*>& scheduled);
 
 static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 
@@ -210,7 +210,7 @@ bool PhaseLCM::schedule(Block& block) {
   assert(checked_cast<int>(block.number_of_nodes()) == scheduled.length(), "");
 
   // Schedule CreateEx and CheckCastPP as early as possible
-  schedule_special_nodes(_cfg, block, scheduled, begin_nodes.length());
+  schedule_special_nodes(_cfg, block, scheduled);
 
   assert(checked_cast<int>(block.number_of_nodes()) == scheduled.length(), "");
   // Cannot go all the way to scheduled.length() since we need to preserve the
@@ -264,8 +264,8 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
       if (cfg.get_block_for_node(out) == &block) {
         continue;
       }
-      for (uint j = 0; j < out->req(); j++) {
-        if (out->in(j) == n) {
+      for (uint i = 0; i < out->req(); i++) {
+        if (out->in(i) == n) {
           return false;
         }
       }
@@ -277,14 +277,33 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
   }
 
   // Begin nodes
+  // The head goes first, then the head Projs, then the Phis
   Node* head = block.head();
   begin_nodes.append(head);
   scheduled.remove(head);
-  for (DUIterator_Fast imax, i = head->fast_outs(imax); i < imax; i++) {
-    Node* out = head->fast_out(i);
-    if (out->is_Phi() || out->is_Proj() || out->Opcode() == Op_Con) {
-      begin_nodes.append(out);
-      scheduled.remove(out);
+  for (int idx = scheduled.length() - 1; idx >= 0; idx--) {
+    Node* n = scheduled.at(idx);
+    if (n->is_Proj() && n->in(0) == head) {
+      begin_nodes.append(n);
+      scheduled.remove_at(idx);
+    }
+  }
+  for (int idx = scheduled.length() - 1; idx >= 0; idx--) {
+    Node* n = scheduled.at(idx);
+    if (n->is_Phi()) {
+      assert(n->in(0) == head, "");
+      begin_nodes.append(n);
+      scheduled.remove_at(idx);
+    }
+  }
+  // Append naked Con to begin_nodes to reduce the number of nodes in scheduled
+  for (int idx = scheduled.length() - 1; idx >= 0; idx--) {
+    Node* n = scheduled.at(idx);
+    int op = n->Opcode();
+    if (op == Op_Con || op == Op_ConI || op == Op_ConL || op == Op_ConF ||
+        op == Op_ConD || op == Op_ConP || op == Op_ConN || op == Op_ConNKlass) {
+      begin_nodes.append(n);
+      scheduled.remove_at(idx);
     }
   }
 
@@ -336,7 +355,7 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
 
 // Schedule CreateEx and CheckCastPP as early as possible
 static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
-                                   GrowableArray<Node*>& scheduled, int begin_idx) {
+                                   GrowableArray<Node*>& scheduled) {
   GrowableArray<Node*> special_nodes;
   for (int i = scheduled.length() - 1; i >= 0; i--) {
     Node* n = scheduled.at(i);
@@ -347,8 +366,25 @@ static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
     if (iop == Op_CreateEx || iop == Op_CheckCastPP) {
       special_nodes.append(n);
       scheduled.remove_at(i);
+#ifdef ASSERT
+      assert(n->req() == 2, "CreateEx and CheckCastPP can only have 1 input");
+      for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
+        Node* out = n->fast_out(i);
+        assert(!out->is_Proj(), "CreateEx and CheckCastPP cannot have Proj output");
+      }
+#endif // ASSERT
     }
   }
+
+  int begin_idx;
+  for (begin_idx = 1; begin_idx < scheduled.length(); begin_idx++) {
+    Node* n = scheduled.at(begin_idx);
+    if (!n->is_Proj() && !n->is_Phi()) {
+      break;
+    }
+    assert(n->in(0) == scheduled.at(0), "");
+  }
+
   while (!special_nodes.is_empty()) {
     for (int idx = special_nodes.length() - 1; idx >= 0; idx--) {
       int pos = begin_idx - 1;
@@ -359,10 +395,16 @@ static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
         if (in == nullptr) {
           continue;
         }
-        int curr_pos = scheduled.find(in);
-        if (curr_pos == -1 && cfg.get_block_for_node(in) == &block) {
-          delay = true;
-          break;
+
+        int curr_pos;
+        if (cfg.get_block_for_node(in) != &block) {
+          curr_pos = -1;
+        } else {
+          curr_pos = scheduled.find(in);
+          if (curr_pos == -1) {
+            delay = true;
+            break;
+          }
         }
         pos = MAX2(pos, curr_pos);
       }
@@ -372,7 +414,15 @@ static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
 
       while (true) {
         pos++;
-        if (pos == scheduled.length() || !scheduled.at(pos)->is_Proj()) {
+        if (pos == scheduled.length()) {
+          break;
+        }
+        Node* curr = scheduled.at(pos);
+        if (curr->is_Proj()) {
+          continue;
+        }
+        // CreateEx nodes have higher priorities than CheckCastPP ones
+        if (!curr->is_Mach() || curr->as_Mach()->ideal_Opcode() != Op_CreateEx) {
           break;
         }
       }
