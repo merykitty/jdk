@@ -94,30 +94,32 @@ bool PhaseLCM::schedule(Block& block) {
   }
 #endif
 
-  ResourceMark mark;
+  {
+    ResourceMark mark;
 
-  BlockScheduler helper(*C, _cfg, _regalloc, block);
-  bool success = helper.schedule();
-  if (!success) {
-    // Subsuming loads (e.g matching "CmpI (LoadI X) Y" into "cmp [X], Y") may
-    // result in a flag being unable to precede its use
-    // The exhaustive list of the cases:
-    // - A flag does not belong to the same block as its use, caught in
-    //   collect_nodes
-    // - The flag input of block.end() cannot precede it, caught in
-    //   collect_nodes
-    // - A flag and its use are separated by a call, caught in schedule_calls
-    // - A flag and its use belong to the same SBlock, but they cannot be
-    //   scheduled as a whole, which results in a cycle in the dependency
-    //   graph, caught in SBlock::schedule
-    if (C->subsume_loads()) {
-      C->record_failure(C2Compiler::retry_no_subsuming_loads());
-    } else {
-      assert(false, "must be schedulable");
-      C->record_method_not_compilable("local schedule failed");
+    BlockScheduler helper(*C, _cfg, _regalloc, block);
+    bool success = helper.schedule();
+    if (!success) {
+      // Subsuming loads (e.g matching "CmpI (LoadI X) Y" into "cmp [X], Y") may
+      // result in a flag being unable to precede its use
+      // The exhaustive list of the cases:
+      // - A flag does not belong to the same block as its use, caught in
+      //   collect_nodes
+      // - The flag input of block.end() cannot precede it, caught in
+      //   collect_nodes
+      // - A flag and its use are separated by a call, caught in schedule_calls
+      // - A flag and its use belong to the same SBlock, but they cannot be
+      //   scheduled as a whole, which results in a cycle in the dependency
+      //   graph, caught in SBlock::schedule
+      if (C->subsume_loads()) {
+        C->record_failure(C2Compiler::retry_no_subsuming_loads());
+      } else {
+        assert(false, "must be schedulable");
+        C->record_method_not_compilable("local schedule failed");
+      }
+
+      return false;
     }
-
-    return false;
   }
 
   // Signify the registers that are killed by the calls according to the calling
@@ -173,38 +175,38 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
     }
   }
 
-  for (uint idx = 0; idx < block.number_of_nodes(); idx++) {
-    scheduled.append(block.get_node(idx));
-  }
-
   // Begin nodes
   // The head goes first, then the head Projs, then the Phis
   Node* head = block.head();
+  assert(head == block.get_node(0), "");
   begin_nodes.append(head);
-  scheduled.remove(head);
-  for (int idx = scheduled.length() - 1; idx >= 0; idx--) {
-    Node* n = scheduled.at(idx);
+  for (uint idx = 1; idx < block.number_of_nodes(); idx++) {
+    Node* n = block.get_node(idx);
     if (n->is_Proj() && n->in(0) == head) {
       begin_nodes.append(n);
-      scheduled.remove_at(idx);
+    } else if (!n->is_Phi() && (!n->is_Con() || n->is_Mach())) {
+      scheduled.append(block.get_node(idx));
     }
   }
-  for (int idx = scheduled.length() - 1; idx >= 0; idx--) {
-    Node* n = scheduled.at(idx);
+  for (uint idx = 1; idx < block.number_of_nodes(); idx++) {
+    Node* n = block.get_node(idx);
     if (n->is_Phi()) {
       assert(n->in(0) == head, "");
       begin_nodes.append(n);
-      scheduled.remove_at(idx);
     }
   }
-  // Append naked Con to begin_nodes to reduce the number of nodes in scheduled
-  for (int idx = scheduled.length() - 1; idx >= 0; idx--) {
-    Node* n = scheduled.at(idx);
-    int op = n->Opcode();
-    if (op == Op_Con || op == Op_ConI || op == Op_ConL || op == Op_ConF ||
-        op == Op_ConD || op == Op_ConP || op == Op_ConN || op == Op_ConNKlass) {
+  // Append unmatched Cons to begin_nodes to reduce the number of nodes in
+  // scheduled
+  for (uint idx = 1; idx < block.number_of_nodes(); idx++) {
+    Node* n = block.get_node(idx);
+    if (n->is_Con() && !n->is_Mach()) {
+#ifdef ASSERT
+      int op = n->Opcode();
+      assert(op == Op_Con || op == Op_ConI || op == Op_ConL || op == Op_ConF ||
+             op == Op_ConD || op == Op_ConP || op == Op_ConN || op == Op_ConNKlass,
+             "Con that is not matched must be one of these");
+#endif // ASSERT
       begin_nodes.append(n);
-      scheduled.remove_at(idx);
     }
   }
 
@@ -1038,6 +1040,10 @@ SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
     assert(unit != nullptr && _units.contains(unit), "a node must belong to a unit");
   }
 #endif // ASSERT
+  if (_units.length() == 1) {
+    _sink = _units.at(0);
+    return;
+  }
 
   for (SUnit* unit : _units) {
     unit->add_predecessors(*this, node_data);

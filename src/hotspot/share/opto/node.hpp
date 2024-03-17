@@ -806,12 +806,11 @@ public:
     Flag_avoid_back_to_back_after    = 1 << 9,
     Flag_has_call                    = 1 << 10,
     Flag_has_swapped_edges           = 1 << 11,
-    Flag_is_scheduled                = 1 << 12,
-    Flag_is_expensive                = 1 << 13,
-    Flag_is_predicated_vector        = 1 << 14,
-    Flag_for_post_loop_opts_igvn     = 1 << 15,
-    Flag_is_removed_by_peephole      = 1 << 16,
-    Flag_is_predicated_using_blend   = 1 << 17,
+    Flag_is_expensive                = 1 << 12,
+    Flag_is_predicated_vector        = 1 << 13,
+    Flag_for_post_loop_opts_igvn     = 1 << 14,
+    Flag_is_removed_by_peephole      = 1 << 15,
+    Flag_is_predicated_using_blend   = 1 << 16,
     _last_flag                       = Flag_is_predicated_using_blend
   };
 
@@ -1035,9 +1034,6 @@ public:
   bool is_predicated_vector() const { return (_flags & Flag_is_predicated_vector) != 0; }
 
   bool is_predicated_using_blend() const { return (_flags & Flag_is_predicated_using_blend) != 0; }
-
-  // Used in lcm to mark nodes that have scheduled
-  bool is_scheduled() const { return (_flags & Flag_is_scheduled) != 0; }
 
   bool for_post_loop_opts_igvn() const { return (_flags & Flag_for_post_loop_opts_igvn) != 0; }
 
