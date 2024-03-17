@@ -843,8 +843,15 @@ bool BlockScheduler::schedule_calls_helper(int start_idx, int end_idx,
   for (Node* n : livein) {
     int n_idx = _node_data.at(n->_idx).vertex_idx;
     assert(n_idx != -1, "");
-    int edge_idx = _src_idx * _vertex_num + n_idx;
-    _graph_edges.at(edge_idx) = std::numeric_limits<double>::infinity();
+    int pin_edge = _src_idx * _vertex_num + n_idx;
+    _graph_edges.at(pin_edge) = std::numeric_limits<double>::infinity();
+
+    // Spill value
+    int forward_edge = n_idx * _vertex_num + n_idx + 1;
+    assert(!n->is_Mach() || !must_clone[n->as_Mach()->ideal_Opcode()],
+           "a flag cannot live across calls or Blocks");
+    double spill_value = SUnit::Pressure(n).total_pressure();
+    _graph_edges.at(forward_edge) = spill_value;
   }
   // Live-out nodes
   for (Node* n : liveout) {
@@ -852,8 +859,8 @@ bool BlockScheduler::schedule_calls_helper(int start_idx, int end_idx,
     if (n_idx == -1) {
       continue;
     }
-    int edge_idx = (n_idx + 1) * _vertex_num + _snk_idx;
-    _graph_edges.at(edge_idx) = std::numeric_limits<double>::infinity();
+    int pin_edge = (n_idx + 1) * _vertex_num + _snk_idx;
+    _graph_edges.at(pin_edge) = std::numeric_limits<double>::infinity();
   }
   // The call must be in the first partition
   int call_idx = _node_data.at(call->_idx).vertex_idx;
