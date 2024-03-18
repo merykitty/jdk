@@ -1550,27 +1550,6 @@ void PhaseCFG::global_code_motion() {
     }
   }
 
-  // Enabling the scheduler for register pressure plus finding blocks of size to schedule for it
-  // is key to enabling this feature.
-  PhaseChaitin regalloc(C->unique(), *this, _matcher, true);
-  ResourceArea live_arena(mtCompiler);      // Arena for liveness
-  ResourceMark rm_live(&live_arena);
-  PhaseLive live(*this, regalloc._lrg_map.names(), &live_arena, true);
-  PhaseIFG ifg(&live_arena);
-  if (OptoRegScheduling) {
-    regalloc.mark_ssa();
-    Compile::TracePhase tp("computeLive", &timers[_t_computeLive]);
-    rm_live.reset_to_mark();           // Reclaim working storage
-    IndexSet::reset_memory(C, &live_arena);
-    uint node_size = regalloc._lrg_map.max_lrg_id();
-    ifg.init(node_size); // Empty IFG
-    regalloc.set_ifg(ifg);
-    regalloc.set_live(live);
-    regalloc.gather_lrg_masks(false);    // Collect LRG masks
-    live.compute(node_size); // Compute liveness
-  }
-  _regalloc = &regalloc;
-
 #ifndef PRODUCT
   if (trace_opto_pipelining()) {
     tty->print("\n---- Start Local Scheduling ----\n");
@@ -1579,11 +1558,10 @@ void PhaseCFG::global_code_motion() {
 
   {
     Compile::TracePhase tp("localcodemotion", &timers[_t_localcodemotion]);
-    PhaseLCM lcm(*this, regalloc);
+    PhaseLCM lcm(*this, _matcher);
     for (uint i = 0; i < number_of_blocks(); i++) {
       bool succeeded = lcm.schedule(*get_block(i));
       if (!succeeded) {
-        _regalloc = nullptr;
         return;
       }
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -385,12 +385,6 @@ class PhaseCFG : public Phase {
 
   // Arena for the blocks to be stored in
   Arena* _block_arena;
-
-  // Info used for scheduling
-  PhaseChaitin* _regalloc;
-
-  // Register pressure heuristic used?
-  bool _scheduling_for_pressure;
 
   // The matcher for this compilation
   Matcher& _matcher;

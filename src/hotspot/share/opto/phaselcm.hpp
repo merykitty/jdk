@@ -25,7 +25,7 @@
 #ifndef SHARE_OPTO_PHASELCM_HPP
 #define SHARE_OPTO_PHASELCM_HPP
 
-#include "opto/phase.hpp"
+#include "opto/chaitin.hpp"
 
 class Block;
 class Node;
@@ -37,10 +37,13 @@ class SUnit;
 class PhaseLCM : public Phase {
 private:
   PhaseCFG& _cfg;
-  PhaseChaitin& _regalloc;
+  ResourceArea _arena;
+  ResourceMark _rm;
+  PhaseChaitin _regalloc;
+  PhaseLive _live;
+  PhaseIFG _ifg;
 public:
-  PhaseLCM(PhaseCFG& cfg, PhaseChaitin& regalloc)
-    : Phase(Phase::LCM), _cfg(cfg), _regalloc(regalloc) {}
+  PhaseLCM(PhaseCFG& cfg, Matcher& matcher);
   bool schedule(Block& block);
 };
 

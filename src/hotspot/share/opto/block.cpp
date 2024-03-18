@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -375,8 +375,6 @@ PhaseCFG::PhaseCFG(Arena* arena, RootNode* root, Matcher& matcher)
 : Phase(CFG)
 , _root(root)
 , _block_arena(arena)
-, _regalloc(nullptr)
-, _scheduling_for_pressure(false)
 , _matcher(matcher)
 , _node_to_block_mapping(arena)
 , _node_latency(nullptr)

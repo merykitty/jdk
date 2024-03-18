@@ -28,6 +28,23 @@
 #include "opto/chaitin.hpp"
 #include "opto/phaselcm.hpp"
 
+PhaseLCM::PhaseLCM(PhaseCFG& cfg, Matcher& matcher)
+  : Phase(Phase::LCM), _cfg(cfg), _arena(mtCompiler), _rm(&_arena),
+    _regalloc(C->unique(), cfg, matcher, true),
+    _live(cfg, _regalloc._lrg_map.names(), &_arena, true), _ifg(&_arena) {
+  if (!StressLCM && OptoRegScheduling) {
+    _regalloc.mark_ssa();
+    _rm.reset_to_mark();
+    IndexSet::reset_memory(C, &_arena);
+    uint node_size = _regalloc._lrg_map.max_lrg_id();
+    _ifg.init(node_size); // Empty IFG
+    _regalloc.set_ifg(_ifg);
+    _regalloc.set_live(_live);
+    _regalloc.gather_lrg_masks(false);    // Collect LRG masks
+    _live.compute(node_size); // Compute liveness
+  }
+}
+
 static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 
 // Schedule all nodes in a block, the result must conform that:
@@ -56,9 +73,9 @@ static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 //     regions each of which is scheduled separately. This is done because a
 //     call kills almost everything.
 // (3) Schedule the nodes in each region obtained from above in a way that
-//     attempt to minimize the number of required registers.
-// (4) Fix the position of CreateEx and CheckCastPP to conform the requirements
-//     regarding their positions in the Block.
+//     attempts to minimize the number of required registers.
+// (4) Fix the positions of CreateEx and CheckCastPP to conform the
+//     requirements regarding their positions in the Block.
 bool PhaseLCM::schedule(Block& block) {
   for (uint i = 0; i < block.number_of_nodes(); i++) {
     Node* n = block.get_node(i);
