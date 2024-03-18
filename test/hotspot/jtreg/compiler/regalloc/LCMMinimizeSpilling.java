@@ -36,7 +36,9 @@ import compiler.lib.ir_framework.*;
 public class LCMMinimizeSpilling {
     private static double out;
     public static void main(String[] args) {
-        TestFramework.run();
+        var test = new TestFramework(LCMMinimizeSpilling.class);
+        test.addFlags("-XX:-UseFPUForSpilling");
+        test.start();
     }
 
     // x + y should be scheduled before the call
@@ -69,5 +71,44 @@ public class LCMMinimizeSpilling {
         double t = x + y + z;
         out = t * t + t;
         return res;
+    }
+
+    @Test
+    @IR(failOn = IRNode.MEM_TO_REG_SPILL_COPY, applyIfPlatform = {"x64", "true"})
+    @Arguments(values = {Argument.NUMBER_42, Argument.NUMBER_42})
+    public static int basicScheduling(int sum, int idx) {
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx; idx++;
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx; idx++;
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx; idx++;
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx; idx++;
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx; idx++;
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx; idx++;
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx; idx++;
+        sum += 2 * idx * idx; idx++; sum += 2 * idx * idx;
+        return sum;
+    }
+
+    @Test
+    @IR(failOn = IRNode.MEM_TO_REG_SPILL_COPY, applyIfPlatform = {"x64", "true"})
+    @Arguments(values = {Argument.NUMBER_42, Argument.RANDOM_EACH, Argument.DEFAULT})
+    public static int flagScheduling(int sum, int idx, int mask) {
+        mask++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
+        sum = (idx & mask) == 0 ? sum + 1 : sum;
+        return sum;
     }
 }

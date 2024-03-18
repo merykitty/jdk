@@ -2147,6 +2147,11 @@ public class IRNode {
         machOnlyNameRegex(SPILL_COPY, "[a-zA-Z]*SpillCopy");
     }
 
+    public static final String MEM_TO_REG_SPILL_COPY = PREFIX + "MEM_TO_REG_SPILL_COPY" + POSTFIX;
+    static {
+        machOnlyNameRegex(MEM_TO_REG_SPILL_COPY, "MemToRegSpillCopy");
+    }
+
     /*
      * Utility methods to set up IR_NODE_MAPPINGS.
      */
