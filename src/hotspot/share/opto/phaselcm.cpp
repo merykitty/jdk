@@ -287,10 +287,14 @@ static void schedule_special_nodes(const PhaseCFG& cfg, const Block& block,
       special_nodes.append(n);
       scheduled.remove_at(i);
 #ifdef ASSERT
-      assert(n->req() == 2, "CreateEx and CheckCastPP can only have 1 input");
+      for (uint i = 0; i < n->req(); i++) {
+        Node* in = n->in(i);
+        assert(in == nullptr || !in->is_MachTemp(),
+               "CreateEx and CheckCastPP cannot have Temp inputs");
+      }
       for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
         Node* out = n->fast_out(i);
-        assert(!out->is_Proj(), "CreateEx and CheckCastPP cannot have Proj output");
+        assert(!out->is_Proj(), "CreateEx and CheckCastPP cannot have Proj outputs");
       }
 #endif // ASSERT
     }
