@@ -2756,6 +2756,12 @@ void CompileBroker::print_times(bool per_compiler, bool aggregate) {
   tty->print_cr("  nmethod total size        : %8u bytes", nmethods_size);
 }
 
+#ifndef PRODUCT
+void CompileBroker::print_spill_cnt() {
+  tty->print_cr("Accumulated spill count: %20ld", JavaThread::total_spill_cnt());
+}
+#endif
+
 // Print general/accumulated JIT information.
 void CompileBroker::print_info(outputStream *out) {
   if (out == nullptr) out = tty;

@@ -113,6 +113,11 @@
 // Set by os layer.
 size_t      JavaThread::_stack_size_at_create = 0;
 
+#ifndef PRODUCT
+// Initialize
+jlong       JavaThread::_total_spill_cnt = 0;
+#endif // PRODUCT
+
 #ifdef DTRACE_ENABLED
 
 // Only bother with this argument setup if dtrace is available
@@ -504,7 +509,8 @@ JavaThread::JavaThread() :
 
   _SleepEvent(ParkEvent::Allocate(this)),
 
-  _lock_stack(this) {
+  _lock_stack(this)
+  NOT_PRODUCT(COMMA _spill_cnt(0)) {
   set_jni_functions(jni_functions());
 
 #if INCLUDE_JVMCI
@@ -692,6 +698,10 @@ JavaThread::~JavaThread() {
     FREE_C_HEAP_ARRAY(jlong, _jvmci_counters);
   }
 #endif // INCLUDE_JVMCI
+
+#ifndef PRODUCT
+  Atomic::add(&_total_spill_cnt, _spill_cnt, memory_order_relaxed);
+#endif // PRODUCT
 }
 
 
