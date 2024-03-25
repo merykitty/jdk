@@ -1197,6 +1197,17 @@ public:
   static bool has_oop_handles_to_release() {
     return _oop_handle_list != nullptr;
   }
+
+#ifndef PRODUCT
+private:
+  // Record the number of times spill instructions are executed
+  jlong _spill_cnt;
+  static jlong _total_spill_cnt;
+
+public:
+  static jlong total_spill_cnt()     { return Atomic::load(&_total_spill_cnt); }
+  static ByteSize spill_cnt_offset() { return byte_offset_of(JavaThread, _spill_cnt); }
+#endif // PRODUCT
 };
 
 inline JavaThread* JavaThread::current_or_null() {

@@ -387,6 +387,9 @@ public:
   // Print a detailed accounting of compilation time
   static void print_times(bool per_compiler = true, bool aggregate = true);
 
+  // Print the number of times spilling instructions are executed
+  static void print_spill_cnt();
+
   // compiler name for debugging
   static const char* compiler_name(int comp_level);
 

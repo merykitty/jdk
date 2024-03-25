@@ -982,6 +982,18 @@ uint MachSpillCopyNode::implementation(CodeBuffer* cbuf,
   enum RC dst_second_rc = rc_class(dst_second);
   enum RC dst_first_rc = rc_class(dst_first);
 
+#ifndef PRODUCT
+  if (CountSpills && cbuf != nullptr &&
+      (dst_first_rc == rc_stack || src_first_rc == rc_stack)) {
+    C2_MacroAssembler _masm(cbuf);
+    __ push(rax);
+    __ movq(rax, Address(r15_thread, JavaThread::spill_cnt_offset()));
+    __ leaq(rax, Address(rax, 1));
+    __ movq(Address(r15_thread, JavaThread::spill_cnt_offset()), rax);
+    __ pop(rax);
+  }
+#endif // PRODUCT
+
   assert(OptoReg::is_valid(src_first) && OptoReg::is_valid(dst_first),
          "must move at least 1 register" );
 

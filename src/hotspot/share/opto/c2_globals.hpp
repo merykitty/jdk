@@ -305,6 +305,9 @@
   notproduct(bool, TraceOptoPipelining, false,                              \
           "Trace pipelining information")                                   \
                                                                             \
+  notproduct(bool, CountSpills, false,                                      \
+          "Record the number of times spill instructions are executed")     \
+                                                                            \
   notproduct(bool, TraceOptoOutput, false,                                  \
           "Trace pipelining information")                                   \
                                                                             \

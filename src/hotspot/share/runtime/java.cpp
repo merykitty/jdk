@@ -245,6 +245,11 @@ void print_statistics() {
   if (CITime) {
     CompileBroker::print_times();
   }
+#ifndef PRODUCT
+  if (CountSpills) {
+    CompileBroker::print_spill_cnt();
+  }
+#endif
 
 #ifdef COMPILER1
   if ((PrintC1Statistics || LogVMOutput || LogCompilation) && UseCompiler) {
