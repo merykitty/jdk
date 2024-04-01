@@ -236,7 +236,7 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
     Node* mem = end->in(1);
     SUnit* end_unit = SUnit::try_create(mem, node_data
                                         DEBUG_ONLY(COMMA 0 COMMA scheduled.length()));
-    end_nodes = end_unit->expand();
+    end_nodes.appendAll(&end_unit->nodes());
     end_nodes.append(end);
     for (DUIterator_Fast imax, i = end->fast_outs(imax); i < imax; i++) {
       Node* out = end->fast_out(i);
@@ -246,7 +246,7 @@ static bool collect_nodes(const PhaseCFG& cfg, const Block& block,
   } else {
     SUnit* end_unit = SUnit::try_create(end, node_data
                                         DEBUG_ONLY(COMMA -1 COMMA scheduled.length()));
-    end_nodes = end_unit->expand();
+    end_nodes.appendAll(&end_unit->nodes());
   }
   for (Node* end : end_nodes) {
     scheduled.remove(end);
@@ -490,7 +490,66 @@ bool BlockScheduler::schedule() {
   return true;
 }
 
+static void collect_local_liveout(GrowableArray<Node*>& local_liveout,
+                                  const GrowableArrayView<Node*>& scheduled, int begin, int end,
+                                  const GrowableArrayView<Node*>& liveout,
+                                  const GrowableArrayView<BlockScheduler::NodeData>& node_data) {
+  if (end == scheduled.length()) {
+    local_liveout.appendAll(&liveout);
+  } else {
+    Node* call;
+    for (int call_idx = end;; call_idx++) {
+      call = scheduled.at(call_idx);
+      if (!call->is_Mach()) {
+        continue;
+      }
+      if (call->is_MachCall() || call->as_Mach()->has_call()) {
+        break;
+      }
+    }
+    for (uint i = 0; i < call->req(); i++) {
+      Node* in = call->in(i);
+      if (in == nullptr) {
+        continue;
+      }
+      local_liveout.append(in);
+    }
+  }
+}
+
+
 bool BlockScheduler::do_schedule() {
+  auto get_live_in_out = [&](GrowableArray<Node*>& list, IndexSet* set) {
+    IndexSetIterator iter(set);
+    while (true) {
+      uint lrg_idx = iter.next();
+      if (lrg_idx == 0) {
+        break;
+      }
+      LRG& lrg = _regalloc.lrgs(lrg_idx);
+      list.append(lrg._def);
+    }
+  };
+
+  GrowableArray<Node*> livein;
+  GrowableArray<Node*> liveout;
+  if (!StressLCM && OptoRegScheduling) {
+    PhaseLive* live = _regalloc.get_live();
+    get_live_in_out(livein, live->livein(&_block));
+    get_live_in_out(liveout, live->live(&_block));
+    for (Node* n : _begin_nodes) {
+      livein.append(n);
+    }
+    for (Node* n : _end_nodes) {
+      for (uint i = 0; i < n->req(); i++) {
+        Node* in = n->in(i);
+        if (in != nullptr && !_end_nodes.contains(in)) {
+          liveout.append_if_missing(in);
+        }
+      }
+    }
+  }
+
   bool has_call = false;
   for (Node* n : _scheduled) {
     if (n->is_MachCall() || (n->is_Mach() && n->as_Mach()->has_call())) {
@@ -500,37 +559,6 @@ bool BlockScheduler::do_schedule() {
   }
 
   if (has_call) {
-    auto get_live_in_out = [&](GrowableArray<Node*>& list, IndexSet* set) {
-      IndexSetIterator iter(set);
-      while (true) {
-        uint lrg_idx = iter.next();
-        if (lrg_idx == 0) {
-          break;
-        }
-        LRG& lrg = _regalloc.lrgs(lrg_idx);
-        list.append(lrg._def);
-      }
-    };
-
-    GrowableArray<Node*> livein;
-    GrowableArray<Node*> liveout;
-    if (!StressLCM && OptoRegScheduling) {
-      PhaseLive* live = _regalloc.get_live();
-      get_live_in_out(livein, live->livein(&_block));
-      get_live_in_out(liveout, live->live(&_block));
-      for (Node* n : _begin_nodes) {
-        livein.append(n);
-      }
-      for (Node* n : _end_nodes) {
-        for (uint i = 0; i < n->req(); i++) {
-          Node* in = n->in(i);
-          if (in != nullptr && !_end_nodes.contains(in)) {
-            liveout.append_if_missing(in);
-          }
-        }
-      }
-    }
-
     bool success = schedule_calls(livein, liveout);
     if (!success) {
       return false;
@@ -560,7 +588,12 @@ bool BlockScheduler::do_schedule() {
       continue;
     }
 
-    SBlock sblock(_scheduled, begin, end, _node_data);
+    GrowableArray<Node*> local_liveout;
+    if (!StressLCM && OptoRegScheduling) {
+      collect_local_liveout(local_liveout, _scheduled, begin, end,
+                            liveout, _node_data);
+    }
+    SBlock sblock(_scheduled, begin, end, local_liveout, _node_data);
 
 #ifndef PRODUCT
     if (_cfg.trace_opto_pipelining()) {
@@ -1049,9 +1082,10 @@ bool BlockScheduler::schedule_calls_helper(int start_idx, int end_idx,
 }
 
 SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
+               const GrowableArrayView<Node*>& liveout,
                GrowableArrayView<BlockScheduler::NodeData>& node_data)
   : _scheduled(scheduled), _start_idx(start_idx), _end_idx(end_idx),
-    _sink(nullptr), _node_data(node_data) {
+    _sink(nullptr), _liveout(liveout), _node_data(node_data) {
   for (int i = start_idx; i < end_idx; i++) {
     Node* n = scheduled.at(i);
     SUnit* unit = SUnit::try_create(n, node_data
@@ -1088,11 +1122,12 @@ SBlock::SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
   }
 }
 
+// Schedule the block in reverse, push a node and all of its predecessors in a
+// FIFO manner
 template <class F>
-bool SBlock::schedule(F random) {
-  GrowableArray<SUnit*> worklist(_units.length());
-  GrowableArray<SUnit*> result(_units.length());
-  worklist.append(_sink);
+static void schedule_bottom_up(GrowableArray<SUnit*>& result, SUnit* root, F random) {
+  GrowableArray<SUnit*> worklist(result.capacity());
+  worklist.append(root);
   while (!worklist.is_empty()) {
     int idx;
     if (StressLCM) {
@@ -1105,16 +1140,166 @@ bool SBlock::schedule(F random) {
     result.append(curr);
     curr->schedule(worklist);
   }
+  // Reverse the list since we are scheduling bottom-up
+  for (int i = 0; i < result.length() / 2; i++) {
+    swap(result.at(i), result.at(result.length() - 1 - i));
+  }
+}
+
+// Since the bottom-up heuristic may not work for units with multiple
+// successors, do a round of top-down scheduling and move up all nodes that
+// more registers than it defines.
+static void schedule_top_down(const SBlock& block, GrowableArrayView<SUnit*>& result,
+                              const GrowableArrayView<Node*>& liveout,
+                              const GrowableArrayView<BlockScheduler::NodeData>& node_data) {
+  for (int idx = 0; idx < result.length(); idx++) {
+    result.at(idx)->_idx = idx;
+  }
+
+  GrowableArray<SUnit::Pressure> kills(result.length() + 1);
+  GrowableArray<Node*> inputs;
+  for (int idx = 1; idx < result.length(); idx++) {
+    SUnit* unit = result.at(idx);
+
+    int min_pred_idx = -1;
+    for (SUnit::SDep* dep : unit->preds()) {
+      if (dep->pred() != nullptr) {
+        min_pred_idx = MAX2(min_pred_idx, dep->pred()->_idx);
+      }
+    }
+    if (min_pred_idx == idx - 1) {
+      // This unit is already at the earliest it can be
+      if (min_pred_idx == -1) {
+        unit->_block_pred = nullptr;
+        unit->_block_pred_state = 0;
+      } else {
+        unit->_block_pred = result.at(min_pred_idx);
+        unit->_block_pred_state = unit->_block_pred->_state;
+      }
+      continue;
+    }
+
+    SUnit::Pressure def_pressure = unit->out_pressure();
+    kills.clear();
+    kills.at_grow(idx);
+
+    // Collect all input nodes
+    inputs.clear();
+    for (Node* n : unit->nodes()) {
+      for (uint i = 0; i < n->req(); i++) {
+        Node* in = n->in(i);
+        if (in != nullptr && !liveout.contains(in)) {
+          inputs.append_if_missing(in);
+        }
+      }
+    }
+
+    // Hypothetically, if unit is moved to another position, find the number of
+    // registers it kills in that case. Then we move the unit to the first
+    // place such that it kills at least as many registers as it defines there.
+    // This also opens new opportunities for other units to move up.
+
+    // Try to find where the inputs are killed ignoring the current unit
+    for (Node* in : inputs) {
+      SUnit::Pressure in_pressure(in);
+      if (in_pressure.total_pressure() == 0) {
+        continue;
+      }
+
+      int kill_idx = block.contains(in) ? node_data.at(in->_idx).sunit->_idx : -1;
+      for (DUIterator_Fast jmax, j = in->fast_outs(jmax); j < jmax; j++) {
+        Node* in_out = in->fast_out(j);
+        if (!block.contains(in_out)) {
+          continue;
+        }
+        SUnit* in_out_unit = node_data.at(in_out->_idx).sunit;
+        if (in_out_unit == unit) {
+          continue;
+        }
+        bool is_req = false;
+        for (uint k = 0; k < in_out->req(); k++) {
+          if (in_out->in(k) == in) {
+            is_req = true;
+            break;
+          }
+        }
+        if (!is_req) {
+          continue;
+        }
+
+        kill_idx = MAX2(kill_idx, in_out_unit->_idx);
+      }
+
+      if (kill_idx < idx) {
+        kills.at(kill_idx + 1) = kills.at(kill_idx + 1).add(in_pressure);
+      }
+    }
+
+    // Find the place to put unit
+    SUnit::Pressure kill_pressure;
+    for (int pred_idx = -1; pred_idx < idx; pred_idx++) {
+      kill_pressure = kill_pressure.add(kills.at(pred_idx + 1));
+      if (kill_pressure.contains(def_pressure)) {
+        pred_idx = MAX2(pred_idx, min_pred_idx);
+        SUnit* pred;
+        int pred_state;
+        if (pred_idx == -1) {
+          pred = nullptr;
+          pred_state = 0;
+        } else {
+          pred = result.at(pred_idx);
+          pred_state = pred->_state;
+        }
+        // If 2 units are decided to move after the same pred, then the second
+        // one would push the first one down. We only want to move the first
+        // unit again if pred itself is moved. These fields are to ensure there
+        // are no unwanted moves.
+        if (unit->_block_pred == pred && unit->_block_pred_state == pred_state) {
+          break;
+        }
+        unit->_block_pred = pred;
+        unit->_block_pred_state = pred_state;
+        int new_idx = pred_idx + 1;
+        if (new_idx != idx) {
+          unit->_state++;
+          for (int i = idx; i > new_idx; i--) {
+            SUnit* temp = result.at(i - 1);
+            result.at(i) = temp;
+            temp->_idx = i;
+          }
+          result.at(new_idx) = unit;
+          unit->_idx = new_idx;
+          idx = new_idx;
+        }
+        break;
+      }
+    }
+  }
+}
+
+template <class F>
+bool SBlock::schedule(F random) {
+  // First phase, schedule the block bottom-up, going from uses to defs
+  GrowableArray<SUnit*> result(_units.length());
+  schedule_bottom_up(result, _sink, random);
   if (result.length() != _units.length()) {
     // Cycle
     return false;
   }
 
-  Node** curr = _scheduled.adr_at(_start_idx);
-  for (int i = result.length() - 1; i >= 0; i--) {
-    curr = result.at(i)->expand(curr);
+  // Second phase, walk the block top-down
+  if (!StressLCM && OptoRegScheduling) {
+    schedule_top_down(*this, result, _liveout, _node_data);
   }
-  assert(curr == _scheduled.adr_at(0) + _end_idx, "");
+
+  int node_idx = _start_idx;
+  for (int unit_idx = 0; unit_idx < result.length(); unit_idx++) {
+    for (Node* n : result.at(unit_idx)->nodes()) {
+      _scheduled.at(node_idx) = n;
+      node_idx++;
+    }
+  }
+  assert(node_idx == _end_idx, "");
   return true;
 }
 
@@ -1127,7 +1312,8 @@ SUnit::SUnit(Node* n, GrowableArrayView<BlockScheduler::NodeData>& node_data
 #ifdef ASSERT
            , int start_idx, int end_idx
 #endif // ASSERT
-) : _def(n), _sethi_ullman(SethiUllmanStatus::not_calculated), _unsched_outs(0) {
+) : _def(n), _sethi_ullman(SethiUllmanStatus::not_calculated), _unsched_outs(0),
+    _state(0), _block_pred(nullptr), _block_pred_state(-1) {
   auto add_node = [&](Node* m) {
     int idx = node_data.at(m->_idx).idx_in_sched;
     assert(idx >= start_idx && idx < end_idx, "must be together");
@@ -1412,24 +1598,6 @@ void SUnit::schedule(GrowableArray<SUnit*>& worklist) {
   }
 }
 
-Node** SUnit::expand(Node** start) const {
-  if (_nodes.is_empty()) {
-    return start;
-  }
-  memcpy(start, _nodes.adr_at(0), sizeof(Node*) * _nodes.length());
-  return start + _nodes.length();
-}
-
-GrowableArray<Node*> SUnit::expand() const {
-  GrowableArray<Node*> res;
-  if (_nodes.is_empty()) {
-    return res;
-  }
-  res.at_grow(_nodes.length() - 1);
-  memcpy(res.adr_at(0), _nodes.adr_at(0), sizeof(Node*) * _nodes.length());
-  return res;
-}
-
 SUnit::Pressure::Pressure(int int_pressure, int float_pressure, int mask_pressure)
   : _int(int_pressure), _float(float_pressure), _mask(mask_pressure) {}
 
@@ -1499,6 +1667,10 @@ bool SUnit::Pressure::less_than(const Pressure& other) const {
     }
   }
   return false;
+}
+
+bool SUnit::Pressure::contains(const Pressure& other) const {
+  return _int >= other._int && _float >= other._float && _mask >= other._mask;
 }
 
 #ifndef PRODUCT

@@ -101,15 +101,16 @@ public:
     int _float;
     int _mask;
 
-    Pressure() : _int(0), _float(0), _mask(0) {}
     Pressure(int int_pressure, int float_pressure, int mask_pressure);
 
   public:
+    Pressure() : _int(0), _float(0), _mask(0) {}
     Pressure(const Node* n);
     Pressure add(const Pressure& other) const;
     Pressure componentwise_max(const Pressure& other) const;
     bool less_than(const Pressure& other) const;
     int total_pressure() const { return _int + _float + _mask; }
+    bool contains(const Pressure& other) const;
   };
 
   class SDep : public ResourceObj {
@@ -138,12 +139,22 @@ private:
   GrowableArray<Node*> _nodes;
   GrowableArray<SDep*> _preds;
   GrowableArray<SDep*> _succs;
+
+  // Sethi-Ullman numbers
   Pressure _temp_pressure;
   Pressure _out_pressure;
   SethiUllmanStatus _sethi_ullman;
   Pressure _sethi_ullman_value;
   int _unsched_outs;
 
+public:
+  // Top-down scheduling
+  int _idx;
+  int _state;
+  SUnit* _block_pred;
+  int _block_pred_state;
+
+private:
   SUnit() : _def(nullptr), _sethi_ullman(SethiUllmanStatus::not_calculated),
             _unsched_outs(0) {}
   SUnit(Node* n, GrowableArrayView<BlockScheduler::NodeData>& node_data
@@ -163,8 +174,9 @@ public:
   void add_predecessors(const SBlock& block,
                         const GrowableArrayView<BlockScheduler::NodeData>& node_data);
   void schedule(GrowableArray<SUnit*>& worklist);
-  Node** expand(Node** start) const;
-  GrowableArray<Node*> expand() const;
+  const GrowableArrayView<Node*>& nodes() const { return _nodes; }
+  const GrowableArrayView<SDep*>& preds() const { return _preds; }
+  const Pressure& out_pressure() const { return _out_pressure; }
 
 #ifdef ASSERT
   bool has_sethi_ullman() const {
@@ -185,10 +197,14 @@ private:
   int _end_idx;
   SUnit* _sink;
   GrowableArray<SUnit*> _units;
+  // livein, liveout for the purpose of this SBlock, nodes that are definitely
+  // spilt are not considered liveout
+  const GrowableArrayView<Node*>& _liveout;
   const GrowableArrayView<BlockScheduler::NodeData>& _node_data;
 
 public:
   SBlock(GrowableArrayView<Node*>& scheduled, int start_idx, int end_idx,
+         const GrowableArrayView<Node*>& liveout,
          GrowableArrayView<BlockScheduler::NodeData>& node_data);
   bool contains(const Node* n) const;
   template <class F>
