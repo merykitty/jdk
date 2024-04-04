@@ -1277,6 +1277,7 @@ static void schedule_top_down(const SBlock& block, GrowableArrayView<SUnit*>& re
   }
 }
 
+#ifdef ASSERT
 static bool verify(const GrowableArrayView<SUnit*>& units) {
   for (int idx = 0; idx < units.length(); idx++) {
     SUnit* unit = units.at(idx);
@@ -1292,6 +1293,7 @@ static bool verify(const GrowableArrayView<SUnit*>& units) {
   }
   return true;
 }
+#endif // ASSERT
 
 template <class F>
 bool SBlock::schedule(F random) {
