@@ -34,10 +34,15 @@ import compiler.lib.ir_framework.*;
  * @run driver compiler.regalloc.LCMMinimizeSpilling
  */
 public class LCMMinimizeSpilling {
+    private static final int[] a = new int[16];
+    private static final int[] b = new int[16];
+    private static final int[] c = new int[16];
+    private static final int[] d = new int[16];
     private static double out;
     public static void main(String[] args) {
         var test = new TestFramework(LCMMinimizeSpilling.class);
         test.addFlags("-XX:-UseFPUForSpilling");
+        test.addFlags("-XX:-UseCISCSpill");
         test.start();
     }
 
@@ -53,7 +58,7 @@ public class LCMMinimizeSpilling {
 
     // x * x + x should be scheduled after the call
     @Test
-    @IR(counts = {IRNode.SPILL_COPY, "2"}, applyIfPlatform = {"x64", "true"})
+    @IR(counts = {IRNode.SPILL_COPY, "3"}, applyIfPlatform = {"x64", "true"})
     @Arguments(values = Argument.NUMBER_42)
     public static double acrossCall2(double x) {
         double res = Math.cos(x);
@@ -64,7 +69,7 @@ public class LCMMinimizeSpilling {
     // x + y + z should be scheduled before the call while t * t + t should be
     // scheduled after
     @Test
-    @IR(counts = {IRNode.SPILL_COPY, "2"}, applyIfPlatform = {"x64", "true"})
+    @IR(counts = {IRNode.SPILL_COPY, "3"}, applyIfPlatform = {"x64", "true"})
     @Arguments(values = {Argument.NUMBER_42, Argument.NUMBER_42, Argument.NUMBER_42})
     public static double acrossCall3(double x, double y, double z) {
         double res = Math.cos(x);
@@ -110,5 +115,45 @@ public class LCMMinimizeSpilling {
         sum = (idx & mask) == 0 ? sum + 1 : sum; idx++;
         sum = (idx & mask) == 0 ? sum + 1 : sum;
         return sum;
+    }
+
+    @Test
+    @IR(failOn = IRNode.MEM_TO_REG_SPILL_COPY, applyIfPlatform = {"x64", "true"})
+    @Arguments(values = Argument.DEFAULT)
+    public static int complexBlock(int r) {
+        int i = 0;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i]; i++;
+        d[i] = (a[i] * b[i]) + (a[i] * c[i]) + (b[i] * c[i]);
+        r ^= d[i];
+        return r;
     }
 }

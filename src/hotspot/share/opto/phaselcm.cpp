@@ -509,7 +509,7 @@ static void collect_local_liveout(GrowableArray<Node*>& local_liveout,
     }
     for (uint i = 0; i < call->req(); i++) {
       Node* in = call->in(i);
-      if (in == nullptr) {
+      if (in == nullptr || SUnit::Pressure(in).total_pressure() == 0) {
         continue;
       }
       local_liveout.append(in);
@@ -1277,6 +1277,22 @@ static void schedule_top_down(const SBlock& block, GrowableArrayView<SUnit*>& re
   }
 }
 
+static bool verify(const GrowableArrayView<SUnit*>& units) {
+  for (int idx = 0; idx < units.length(); idx++) {
+    SUnit* unit = units.at(idx);
+    for (SUnit::SDep* dep : unit->preds()) {
+      SUnit* pred = dep->pred();
+      if (pred != nullptr) {
+        int pred_idx = units.find(pred);
+        if (pred_idx < 0 || pred_idx >= idx) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 template <class F>
 bool SBlock::schedule(F random) {
   // First phase, schedule the block bottom-up, going from uses to defs
@@ -1286,10 +1302,12 @@ bool SBlock::schedule(F random) {
     // Cycle
     return false;
   }
+  assert(verify(result), "bottom-up scheduling error");
 
   // Second phase, walk the block top-down
   if (!StressLCM && OptoRegScheduling) {
     schedule_top_down(*this, result, _liveout, _node_data);
+    assert(verify(result), "top-down scheduling error");
   }
 
   int node_idx = _start_idx;
@@ -1674,7 +1692,7 @@ bool SUnit::Pressure::contains(const Pressure& other) const {
 }
 
 #ifndef PRODUCT
-void SBlock::dump() {
+void SBlock::dump() const {
   for (SUnit* u : _units) {
     tty->print("# ");
     u->dump();
@@ -1682,7 +1700,7 @@ void SBlock::dump() {
   tty->print_cr("#");
 }
 
-void SUnit::dump() {
+void SUnit::dump() const {
   auto print_pressure = [](const Pressure& p) {
     tty->print("{I:%d F:%d M:%d}", p._int, p._float, p._mask);
   };

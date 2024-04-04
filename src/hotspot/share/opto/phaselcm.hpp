@@ -185,7 +185,7 @@ public:
 #endif // ASSERT
 
 #ifndef PRODUCT
-  void dump();
+  void dump() const;
 #endif // PRODUCT
 };
 
@@ -197,8 +197,8 @@ private:
   int _end_idx;
   SUnit* _sink;
   GrowableArray<SUnit*> _units;
-  // livein, liveout for the purpose of this SBlock, nodes that are definitely
-  // spilt are not considered liveout
+  // liveout for the purpose of this SBlock, nodes that are definitely spilt
+  // are not considered liveout
   const GrowableArrayView<Node*>& _liveout;
   const GrowableArrayView<BlockScheduler::NodeData>& _node_data;
 
@@ -211,7 +211,7 @@ public:
   bool schedule(F random);
 
 #ifndef PRODUCT
-  void dump();
+  void dump() const;
 #endif // PRODUCT
 };
 
