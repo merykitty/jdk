@@ -33,15 +33,11 @@ PhaseLCM::PhaseLCM(PhaseCFG& cfg, Matcher& matcher)
     _regalloc(C->unique(), cfg, matcher, true),
     _live(cfg, _regalloc._lrg_map.names(), &_arena, true), _ifg(&_arena) {
   if (!StressLCM && OptoRegScheduling) {
-    _regalloc.mark_ssa();
-    _rm.reset_to_mark();
-    IndexSet::reset_memory(C, &_arena);
-    uint node_size = _regalloc._lrg_map.max_lrg_id();
-    _ifg.init(node_size); // Empty IFG
     _regalloc.set_ifg(_ifg);
     _regalloc.set_live(_live);
-    _regalloc.gather_lrg_masks(false);    // Collect LRG masks
-    _live.compute(node_size); // Compute liveness
+    _rm.reset_to_mark();
+    IndexSet::reset_memory(C, &_arena);
+    _regalloc.compute_live_ssa();
   }
 }
 
@@ -77,6 +73,26 @@ static void add_call_projs(PhaseCFG& cfg, const Matcher& matcher, Block& block);
 // (4) Fix the positions of CreateEx and CheckCastPP to conform the
 //     requirements regarding their positions in the Block.
 bool PhaseLCM::schedule(Block& block) {
+  constexpr double uncommon_threshold = 0.1;
+  auto is_continuation = [this](Block* b) {
+    // We need to ensure that a node dominates all nodes after it, so it is
+    // necessary to have each block dominating its following ones
+    if (b->num_preds() != 2) {
+      return false;
+    }
+    Node* pred_head = b->pred(1);
+    if (pred_head->is_Root()) {
+      return false;
+    }
+    Block* pred = _cfg.get_block_for_node(pred_head);
+
+  };
+
+  Block* curr = &block;
+  while (true) {
+
+  }
+
   for (uint i = 0; i < block.number_of_nodes(); i++) {
     Node* n = block.get_node(i);
     // A few node types require changing a required edge to a precedence edge

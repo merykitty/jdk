@@ -504,8 +504,8 @@ public:
   void set_live(PhaseLive &live) { _live = &live; }
   PhaseLive* get_live() { return _live; }
 
-  // Populate the live range maps with ssa info for scheduling
-  void mark_ssa();
+  // Compute the live info for local code motion
+  void compute_live_ssa();
 
 #ifndef PRODUCT
   bool trace_spilling() const { return _trace_spilling; }

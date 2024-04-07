@@ -729,27 +729,31 @@ void PhaseChaitin::de_ssa() {
   _lrg_map.reset_uf_map(lr_counter);
 }
 
-void PhaseChaitin::mark_ssa() {
-  // Use ssa names to populate the live range maps or if no mask
-  // is available, use the 0 entry.
+void PhaseChaitin::compute_live_ssa() {
   uint max_idx = 0;
-  for ( uint i = 0; i < _cfg.number_of_blocks(); i++ ) {
+  for (uint i = 0; i < _cfg.number_of_blocks(); i++) {
     Block* block = _cfg.get_block(i);
     uint cnt = block->number_of_nodes();
-
-    // Handle all the normal Nodes in the block
-    for ( uint j = 0; j < cnt; j++ ) {
-      Node *n = block->get_node(j);
-      // Pre-color to the zero live range, or pick virtual register
-      const RegMask &rm = n->out_RegMask();
-      _lrg_map.map(n->_idx, rm.is_NotEmpty() ? n->_idx : 0);
-      max_idx = (n->_idx > max_idx) ? n->_idx : max_idx;
+    for (uint j = 0; j < cnt; j++) {
+      Node* n = block->get_node(j);
+      _lrg_map.map(n->_idx, n->_idx);
+      max_idx = MAX2(max_idx, n->_idx);
     }
   }
-  _lrg_map.set_max_lrg_id(max_idx+1);
 
-  // Reset the Union-Find mapping to be identity
-  _lrg_map.reset_uf_map(max_idx+1);
+  uint idx_bound = max_idx + 1;
+  _lrg_map.set_max_lrg_id(idx_bound);
+  _lrg_map.reset_uf_map(idx_bound);
+  _ifg->init(idx_bound);
+  for (uint i = 0; i < _cfg.number_of_blocks(); i++) {
+    Block* block = _cfg.get_block(i);
+    uint cnt = block->number_of_nodes();
+    for (uint j = 0; j < cnt; j++) {
+      Node* n = block->get_node(j);
+      lrgs(n->_idx)._def = n;
+    }
+  }
+  _live->compute(idx_bound);
 }
 
 
