@@ -1786,145 +1786,14 @@ void PhaseChaitin::fixup_spills() {
   } // End of for all blocks
 }
 
-// Helper to stretch above; recursively discover the base Node for a
-// given derived Node.  Easy for AddP-related machine nodes, but needs
-// to be recursive for derived Phis.
-Node* PhaseChaitin::find_base_for_derived(Node** derived_base_map, Node* derived, uint& maxlrg) {
-  // See if already computed; if so return it
-  if (derived_base_map[derived->_idx]) {
-    return derived_base_map[derived->_idx];
-  }
-
-#ifdef ASSERT
-  if (derived->is_Mach() && derived->as_Mach()->ideal_Opcode() == Op_VerifyVectorAlignment) {
-    // Bypass the verification node
-    Node* base = find_base_for_derived(derived_base_map, derived->in(1), maxlrg);
-    derived_base_map[derived->_idx] = base;
-    return base;
-  }
-#endif
-
-  // See if this happens to be a base.
-  // NOTE: we use TypePtr instead of TypeOopPtr because we can have
-  // pointers derived from null!  These are always along paths that
-  // can't happen at run-time but the optimizer cannot deduce it so
-  // we have to handle it gracefully.
-  assert(!derived->bottom_type()->isa_narrowoop() ||
-          derived->bottom_type()->make_ptr()->is_ptr()->_offset == 0, "sanity");
-  const TypePtr *tj = derived->bottom_type()->isa_ptr();
-  // If its an OOP with a non-zero offset, then it is derived.
-  if( tj == nullptr || tj->_offset == 0 ) {
-    derived_base_map[derived->_idx] = derived;
-    return derived;
-  }
-  // Derived is null+offset?  Base is null!
-  if( derived->is_Con() ) {
-    Node *base = _matcher.mach_null();
-    assert(base != nullptr, "sanity");
-    if (base->in(0) == nullptr) {
-      // Initialize it once and make it shared:
-      // set control to _root and place it into Start block
-      // (where top() node is placed).
-      base->init_req(0, _cfg.get_root_node());
-      Block *startb = _cfg.get_block_for_node(C->top());
-      uint node_pos = startb->find_node(C->top());
-      startb->insert_node(base, node_pos);
-      _cfg.map_node_to_block(base, startb);
-      assert(_lrg_map.live_range_id(base) == 0, "should not have LRG yet");
-
-      // The loadConP0 might have projection nodes depending on architecture
-      // Add the projection nodes to the CFG
-      for (DUIterator_Fast imax, i = base->fast_outs(imax); i < imax; i++) {
-        Node* use = base->fast_out(i);
-        if (use->is_MachProj()) {
-          startb->insert_node(use, ++node_pos);
-          _cfg.map_node_to_block(use, startb);
-          new_lrg(use, maxlrg++);
-        }
-      }
-    }
-    if (_lrg_map.live_range_id(base) == 0) {
-      new_lrg(base, maxlrg++);
-    }
-    assert(base->in(0) == _cfg.get_root_node() && _cfg.get_block_for_node(base) == _cfg.get_block_for_node(C->top()), "base null should be shared");
-    derived_base_map[derived->_idx] = base;
-    return base;
-  }
-
-  // Check for AddP-related opcodes
-  if (!derived->is_Phi()) {
-    assert(derived->as_Mach()->ideal_Opcode() == Op_AddP, "but is: %s", derived->Name());
-    Node *base = derived->in(AddPNode::Base);
-    derived_base_map[derived->_idx] = base;
-    return base;
-  }
-
-  // Recursively find bases for Phis.
-  // First check to see if we can avoid a base Phi here.
-  Node *base = find_base_for_derived( derived_base_map, derived->in(1),maxlrg);
-  uint i;
-  for( i = 2; i < derived->req(); i++ )
-    if( base != find_base_for_derived( derived_base_map,derived->in(i),maxlrg))
-      break;
-  // Went to the end without finding any different bases?
-  if( i == derived->req() ) {   // No need for a base Phi here
-    derived_base_map[derived->_idx] = base;
-    return base;
-  }
-
-  // Now we see we need a base-Phi here to merge the bases
-  const Type *t = base->bottom_type();
-  base = new PhiNode( derived->in(0), t );
-  for( i = 1; i < derived->req(); i++ ) {
-    base->init_req(i, find_base_for_derived(derived_base_map, derived->in(i), maxlrg));
-    t = t->meet(base->in(i)->bottom_type());
-  }
-  base->as_Phi()->set_type(t);
-
-  // Search the current block for an existing base-Phi
-  Block *b = _cfg.get_block_for_node(derived);
-  for( i = 1; i <= b->end_idx(); i++ ) {// Search for matching Phi
-    Node *phi = b->get_node(i);
-    if( !phi->is_Phi() ) {      // Found end of Phis with no match?
-      b->insert_node(base,  i); // Must insert created Phi here as base
-      _cfg.map_node_to_block(base, b);
-      new_lrg(base,maxlrg++);
-      break;
-    }
-    // See if Phi matches.
-    uint j;
-    for( j = 1; j < base->req(); j++ )
-      if( phi->in(j) != base->in(j) &&
-          !(phi->in(j)->is_Con() && base->in(j)->is_Con()) ) // allow different nulls
-        break;
-    if( j == base->req() ) {    // All inputs match?
-      base = phi;               // Then use existing 'phi' and drop 'base'
-      break;
-    }
-  }
-
-
-  // Cache info for later passes
-  derived_base_map[derived->_idx] = base;
-  return base;
-}
-
-// At each Safepoint, insert extra debug edges for each pair of derived value/
-// base pointer that is live across the Safepoint for oopmap building.  The
-// edge pairs get added in after sfpt->jvmtail()->oopoff(), but are in the
-// required edge set.
+// 
 bool PhaseChaitin::stretch_base_pointer_live_ranges(ResourceArea *a) {
   int must_recompute_live = false;
   uint maxlrg = _lrg_map.max_lrg_id();
-  Node **derived_base_map = (Node**)a->Amalloc(sizeof(Node*)*C->unique());
-  memset( derived_base_map, 0, sizeof(Node*)*C->unique() );
 
   // For all blocks in RPO do...
   for (uint i = 0; i < _cfg.number_of_blocks(); i++) {
     Block* block = _cfg.get_block(i);
-    // Note use of deep-copy constructor.  I cannot hammer the original
-    // liveout bits, because they are needed by the following coalesce pass.
-    IndexSet liveout(_live->live(block));
 
     for (uint j = block->end_idx() + 1; j > 1; j--) {
       Node* n = block->get_node(j - 1);
@@ -1951,75 +1820,7 @@ bool PhaseChaitin::stretch_base_pointer_live_ranges(ResourceArea *a) {
           }
         }
       }
-
-      // Get value being defined
-      uint lidx = _lrg_map.live_range_id(n);
-      // Ignore the occasional brand-new live range
-      if (lidx && lidx < _lrg_map.max_lrg_id()) {
-        // Remove from live-out set
-        liveout.remove(lidx);
-
-        // Copies do not define a new value and so do not interfere.
-        // Remove the copies source from the liveout set before interfering.
-        uint idx = n->is_Copy();
-        if (idx) {
-          liveout.remove(_lrg_map.live_range_id(n->in(idx)));
-        }
-      }
-
-      // Found a safepoint?
-      JVMState *jvms = n->jvms();
-      if (jvms && !liveout.is_empty()) {
-        // Now scan for a live derived pointer
-        IndexSetIterator elements(&liveout);
-        uint neighbor;
-        while ((neighbor = elements.next()) != 0) {
-          // Find reaching DEF for base and derived values
-          // This works because we are still in SSA during this call.
-          Node *derived = lrgs(neighbor)._def;
-          const TypePtr *tj = derived->bottom_type()->isa_ptr();
-          assert(!derived->bottom_type()->isa_narrowoop() ||
-                  derived->bottom_type()->make_ptr()->is_ptr()->_offset == 0, "sanity");
-          // If its an OOP with a non-zero offset, then it is derived.
-          if( tj && tj->_offset != 0 && tj->isa_oop_ptr() ) {
-            Node *base = find_base_for_derived(derived_base_map, derived, maxlrg);
-            assert(base->_idx < _lrg_map.size(), "");
-            // Add reaching DEFs of derived pointer and base pointer as a
-            // pair of inputs
-            n->add_req(derived);
-            n->add_req(base);
-
-            // See if the base pointer is already live to this point.
-            // Since I'm working on the SSA form, live-ness amounts to
-            // reaching def's.  So if I find the base's live range then
-            // I know the base's def reaches here.
-            if ((_lrg_map.live_range_id(base) >= _lrg_map.max_lrg_id() || // (Brand new base (hence not live) or
-                 !liveout.member(_lrg_map.live_range_id(base))) && // not live) AND
-                 (_lrg_map.live_range_id(base) > 0) && // not a constant
-                 _cfg.get_block_for_node(base) != block) { // base not def'd in blk)
-              // Base pointer is not currently live.  Since I stretched
-              // the base pointer to here and it crosses basic-block
-              // boundaries, the global live info is now incorrect.
-              // Recompute live.
-              must_recompute_live = true;
-            } // End of if base pointer is not live to debug info
-          }
-        } // End of scan all live data for derived ptrs crossing GC point
-      } // End of if found a GC point
-
-      // Make all inputs live
-      if (!n->is_Phi()) {      // Phi function uses come from prior block
-        for (uint k = 1; k < n->req(); k++) {
-          uint lidx = _lrg_map.live_range_id(n->in(k));
-          if (lidx < _lrg_map.max_lrg_id()) {
-            liveout.insert(lidx);
-          }
-        }
-      }
-
     } // End of forall instructions in block
-    liveout.clear();  // Free the memory used by liveout.
-
   } // End of forall blocks
   _lrg_map.set_max_lrg_id(maxlrg);
 

@@ -426,8 +426,8 @@ Block* Block::dom_lca(Block* LCA) {
 // The definition must dominate the use, so move the LCA upward in the
 // dominator tree to dominate the use.  If the use is a phi, adjust
 // the LCA only with the phi input paths which actually use this def.
-static Block* raise_LCA_above_use(Block* LCA, Node* use, Node* def, const PhaseCFG* cfg) {
-  Block* buse = cfg->get_block_for_node(use);
+Block* PhaseCFG::raise_LCA_above_use(Block* LCA, Node* use, Node* def) const {
+  Block* buse = get_block_for_node(use);
   if (buse == nullptr) return LCA;   // Unused killing Projs have no use block
   if (!use->is_Phi())  return buse->dom_lca(LCA);
   uint pmax = use->req();       // Number of Phi inputs
@@ -442,7 +442,7 @@ static Block* raise_LCA_above_use(Block* LCA, Node* use, Node* def, const PhaseC
   // more than once.
   for (uint j=1; j<pmax; j++) { // For all inputs
     if (use->in(j) == def) {    // Found matching input?
-      Block* pred = cfg->get_block_for_node(buse->pred(j));
+      Block* pred = get_block_for_node(buse->pred(j));
       LCA = pred->dom_lca(LCA);
     }
   }
@@ -1389,7 +1389,7 @@ void PhaseCFG::schedule_late(VectorSet &visited, Node_Stack &stack) {
       for (DUIterator_Fast imax, i = self->fast_outs(imax); i < imax; i++) {
         // For all uses, find LCA
         Node* use = self->fast_out(i);
-        LCA = raise_LCA_above_use(LCA, use, self, this);
+        LCA = raise_LCA_above_use(LCA, use, self);
       }
       guarantee(LCA != nullptr, "There must be a LCA");
     }  // (Hide defs of imax, i from rest of block.)
@@ -1686,6 +1686,7 @@ void PhaseCFG::estimate_block_frequency() {
   // Create the loop tree and calculate loop depth.
   _root_loop = create_loop_tree();
   _root_loop->compute_loop_depth(0);
+  _root_loop->compute_loop_height();
 
   // Compute block frequency of each block, relative to a single loop entry.
   _root_loop->compute_freq();
@@ -1884,6 +1885,26 @@ void CFGLoop::compute_loop_depth(int depth) {
     ch->compute_loop_depth(depth + 1);
     ch = ch->_sibling;
   }
+}
+
+// Store the loop heights, the levels of nesting in loops.
+// Height of a leaf is 0, while that of a subtree root is the maximum height of
+// its children plus one.
+void CFGLoop::compute_loop_height() {
+  if (_child == nullptr) {
+    _height = 0;
+    return;
+  }
+
+  for (CFGLoop* ch = _child; ch != nullptr; ch = ch->_sibling) {
+    ch->compute_loop_height();
+  }
+
+  int height = 1;
+  for (CFGLoop* ch = _child; ch != nullptr; ch = ch->_sibling) {
+    height = MAX2(height, ch->_height + 1);
+  }
+  _height = height;
 }
 
 //------------------------------compute_freq-----------------------------------
@@ -2205,9 +2226,6 @@ bool CFGLoop::in_loop_nest(Block* b) {
   int depth = _depth;
   CFGLoop* b_loop = b->_loop;
   int b_depth = b_loop->_depth;
-  if (depth == b_depth) {
-    return true;
-  }
   while (b_depth > depth) {
     b_loop = b_loop->_parent;
     b_depth = b_loop->_depth;

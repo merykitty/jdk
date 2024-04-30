@@ -677,10 +677,6 @@ public:
 private:
   // Force the bases of derived pointers to be alive at GC points.
   bool stretch_base_pointer_live_ranges( ResourceArea *a );
-  // Helper to stretch above; recursively discover the base Node for
-  // a given derived Node.  Easy for AddP-related machine nodes, but
-  // needs to be recursive for derived Phis.
-  Node *find_base_for_derived( Node **derived_base_map, Node *derived, uint &maxlrg );
 
   // Set the was-lo-degree bit.  Conservative coalescing should not change the
   // colorability of the graph.  If any live range was of low-degree before

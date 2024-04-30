@@ -930,22 +930,6 @@ uint PhaseChaitin::Split(uint maxlrg, ResourceArea* split_arena) {
             Node *def = Reachblock[slidx];
             assert( def != nullptr, "Using Undefined Value in Split()\n");
 
-            // (+++) %%%% remove this in favor of pre-pass in matcher.cpp
-            // monitor references do not care where they live, so just hook
-            if ( jvms && jvms->is_monitor_use(inpidx) ) {
-              // The effect of this clone is to drop the node out of the block,
-              // so that the allocator does not see it anymore, and therefore
-              // does not attempt to assign it a register.
-              def = clone_node(def, b, C);
-              if (def == nullptr || C->check_node_count(NodeLimitFudgeFactor, out_of_nodes)) {
-                return 0;
-              }
-              _lrg_map.extend(def->_idx, 0);
-              _cfg.map_node_to_block(def, b);
-              n->set_req(inpidx, def);
-              continue;
-            }
-
             // Rematerializable?  Then clone def at use site instead
             // of store/load
             if( def->rematerialize() ) {

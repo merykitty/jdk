@@ -69,6 +69,7 @@
 #include "opto/opcodes.hpp"
 #include "opto/output.hpp"
 #include "opto/parse.hpp"
+#include "opto/phasespill.hpp"
 #include "opto/phaseX.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
@@ -2972,6 +2973,12 @@ void Compile::Code_Gen() {
     print_method(PHASE_GLOBAL_CODE_MOTION, 2);
     NOT_PRODUCT( verify_graph_edges(); )
     cfg.verify();
+  }
+
+  {
+    TracePhase tp("spilling", &timers[_t_spill]);
+    PhaseSpill spill(cfg);
+    spill.do_spilling();
   }
 
   PhaseChaitin regalloc(unique(), cfg, matcher, false);

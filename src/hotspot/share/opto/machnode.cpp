@@ -478,7 +478,12 @@ void MachNode::method_set( intptr_t addr ) {
 //------------------------------rematerialize----------------------------------
 bool MachNode::rematerialize() const {
   // Temps are always rematerializable
-  if (is_MachTemp()) return true;
+  if (is_MachTemp()) {
+    return true;
+  }
+  if (is_MachSpillCopy()) {
+    return out_RegMask().is_UP();
+  }
 
   uint r = rule();              // Match rule
   if (r <  Matcher::_begin_rematerialize ||

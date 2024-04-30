@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -51,6 +51,7 @@ public:
     Ins_Select,                       // Instruction selection phase
     CFG,                              // Build a CFG
     BlockLayout,                      // Linear ordering of blocks
+    Spill,                            // Spill variables if the register pressure is high
     Register_Allocation,              // Register allocation, duh
     LIVE,                             // Dragon-book LIVE range problem
     StringOpts,                       // StringBuilder related optimizations
@@ -92,6 +93,8 @@ public:
     _t_matcher,
       _t_postselect_cleanup,
     _t_scheduler,
+    _t_spill,
+      _t_spillComputeLive,
     _t_registerAllocation,
       _t_ctorChaitin,
       _t_buildIFGvirtual,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -114,6 +114,11 @@ void Phase::print_timers() {
   tty->print_cr ("       Scheduler:                %7.3f s", timers[_t_scheduler].seconds());
 
   {
+    tty->print_cr ("       Spill:               %7.3f s", timers[_t_spill].seconds());
+    tty->print_cr ("         Compute Liveness:    %7.3f s", timers[_t_spillComputeLive].seconds());
+  }
+
+  {
     tty->print_cr ("       Regalloc:            %7.3f s", timers[_t_registerAllocation].seconds());
     tty->print_cr ("         Ctor Chaitin:        %7.3f s", timers[_t_ctorChaitin].seconds());
     tty->print_cr ("         Build IFG (virt):    %7.3f s", timers[_t_buildIFGvirtual].seconds());
@@ -191,6 +196,7 @@ void Phase::print_timers() {
        timers[_t_optimizer].seconds() +
        timers[_t_matcher].seconds() +
        timers[_t_scheduler].seconds() +
+       timers[_t_spill].seconds() +
        timers[_t_registerAllocation].seconds() +
        timers[_t_blockOrdering].seconds() +
        timers[_t_peephole].seconds() +

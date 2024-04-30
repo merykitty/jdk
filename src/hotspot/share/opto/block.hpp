@@ -444,6 +444,7 @@ class PhaseCFG : public Phase {
                         uint end_latency, double least_freq,
                         int cand_cnt, bool in_latency);
 
+
   // Pick a block between early and late that is a cheaper alternative
   // to late. Helper for schedule_late.
   Block* hoist_to_cheaper_block(Block* LCA, Block* early, Node* self);
@@ -603,6 +604,8 @@ class PhaseCFG : public Phase {
   // Returns true on success
   bool do_global_code_motion();
 
+  Block* raise_LCA_above_use(Block* LCA, Node* use, Node* def) const;
+
   // Compute the (backwards) latency of a node from the uses
   void latency_from_uses(Node *n);
 
@@ -703,6 +706,7 @@ class CFGLoop : public CFGElement {
   friend class VMStructs;
   int _id;
   int _depth;
+  int _height;
   CFGLoop *_parent;      // root of loop tree is the method level "pseudo" loop, it's parent is null
   CFGLoop *_sibling;     // null terminated list
   CFGLoop *_child;       // first child, use child's sibling to visit all immediately nested loops
@@ -733,14 +737,16 @@ class CFGLoop : public CFGElement {
   }
   Block* backedge_block(); // Return the block on the backedge of the loop (else null)
   void compute_loop_depth(int depth);
+  void compute_loop_height();
   void compute_freq(); // compute frequency with loop assuming head freq 1.0f
   void scale_freq();   // scale frequency by loop trip count (including outer loops)
   double outer_loop_freq() const; // frequency of outer loop
   bool in_loop_nest(Block* b);
   double trip_count() const { return 1.0 / _exit_prob; }
-  virtual bool is_loop()  { return true; }
-  int id() { return _id; }
-  int depth() { return _depth; }
+  virtual bool is_loop() { return true; }
+  int id() const { return _id; }
+  int depth() const { return _depth; }
+  int height() const { return _height; }
 
 #ifndef PRODUCT
   void dump( ) const;

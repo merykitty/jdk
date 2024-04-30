@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -587,7 +587,10 @@ public:
     InputToRematerialization,          // When rematerializing a node we stretch the inputs live ranges, and they might be
                                        // stretched beyond a new definition point, therefore we split out new copies instead
     CallUse,                           // Spill use at a call
-    Bound                              // An lrg marked as spill that is bound and needs to be spilled at a use
+    Bound,                             // An lrg marked as spill that is bound and needs to be spilled at a use
+
+    SpillRegToMem,
+    SpillMemToReg,                     // Use by PhaseSpill to spill and reload values
   };
 private:
   const RegMask *_in;           // RegMask for input
@@ -645,6 +648,10 @@ public:
         return "CallUseSpillCopy";
       case Bound:
         return "BoundSpillCopy";
+      case SpillMemToReg:
+        return "SpillMemToRegSpillCopy";
+      case SpillRegToMem:
+        return "SpillRegToMemSpillCopy";
       default:
         assert(false, "Must have valid spill type");
         return "MachSpillCopy";
