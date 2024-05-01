@@ -400,7 +400,17 @@ static void fixup_base_derived_map(Node* sft, const GrowableArrayView<PhaseSpill
       continue;
     }
 
-    assert(!n->as_MachSpillCopy()->out_RegMask().is_UP() &&
+    if (!n->is_MachSpillCopy()) {
+      tty->print_cr("safepoint:");
+      sft->dump();
+      for (uint i = jvms->oopoff(); i < sft->req(); i += 2) {
+        tty->print_cr("input %d:", i);
+        sft->in(i)->dump(3);
+      }
+      tty->print_cr("n:");
+      n->dump();
+    }
+    assert(n->is_MachSpillCopy() && !n->out_RegMask().is_UP() &&
            get_def(n) == n->in(1), "");
     assert(base != nullptr, "");
     sft->add_req(n);
@@ -521,15 +531,15 @@ void PhaseSpill::do_spilling() {
   while (true) {
     bool progress = false;
     for (int block_idx = 1; block_idx < _blocks.length(); block_idx++) {
-      Block* block = _blocks.at(block_idx);
       BlockInfo& info = _live_info.at(block_idx);
       int hrp_idx = info._hrp.first_idx();
       if (hrp_idx == -1) {
         continue;
       }
-
-      assert(block_idx > old_block_idx || (block_idx == old_block_idx && hrp_idx >= old_hrp_idx), "");
       progress = true;
+      assert(block_idx > old_block_idx || (block_idx == old_block_idx && hrp_idx >= old_hrp_idx), "");
+
+      Block* block = _blocks.at(block_idx);
       live.clear();
       calculate_live(live, info._liveout, *block, hrp_idx);
       // We need to spill before the register pressure is high
@@ -622,23 +632,6 @@ void PhaseSpill::do_spilling() {
     }
   }
 
-  GrowableArray<Node*> tmp1;
-  GrowableArray<Node*> tmp2;
-  for (int block_idx = 0; block_idx < _blocks.length(); block_idx++) {
-    Block& block = *_blocks.at(block_idx);
-    for (uint node_idx = 0; node_idx < block.number_of_nodes(); node_idx++) {
-      Node* n = block.get_node(node_idx);
-      JVMState* jvms = n->jvms();
-      if (jvms == nullptr) {
-        continue;
-      }
-
-      live.clear();
-      calculate_live(live, _live_info.at(block_idx)._liveout, block, node_idx + 1);
-      fixup_base_derived_map(n, live, tmp1, tmp2);
-    }
-  }
-
   // Use _reload_list as the worklist
   while (_reload_list.is_nonempty()) {
     Node* curr = _reload_list.at(_reload_list.length() - 1);
@@ -708,7 +701,32 @@ void PhaseSpill::do_spilling() {
     min_lca->insert_node(spill, insert_idx);
     _cfg.map_node_to_block(spill, min_lca);
   }
-  DEBUG_ONLY(_cfg.verify());
+
+  compute_live();
+  GrowableArray<Node*> tmp1;
+  GrowableArray<Node*> tmp2;
+  for (int block_idx = 0; block_idx < _blocks.length(); block_idx++) {
+    Block& block = *_blocks.at(block_idx);
+    for (uint node_idx = 0; node_idx < block.number_of_nodes(); node_idx++) {
+      Node* n = block.get_node(node_idx);
+      JVMState* jvms = n->jvms();
+      if (jvms == nullptr) {
+        continue;
+      }
+
+      live.clear();
+      calculate_live(live, _live_info.at(block_idx)._liveout, block, node_idx + 1);
+      fixup_base_derived_map(n, live, tmp1, tmp2);
+    }
+  }
+
+#ifdef ASSERT
+  _cfg.verify();
+  // compute_live();
+  // for (int block_idx = 1; block_idx < _blocks.length(); block_idx++) {
+  //   assert(_live_info.at(block_idx)._hrp.first_idx() == -1, "");
+  // }
+#endif // ASSERT
 }
 
 static void collect_uses(const PhaseCFG& cfg, GrowableArray<Pair<Node*, uint>>& uses, Node* def, Node* exclusion) {
