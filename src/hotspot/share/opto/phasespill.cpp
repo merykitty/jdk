@@ -316,10 +316,11 @@ static Node* find_base_for_derived(PhaseCFG& cfg, Node* machnull,
 }
 
 // For all derived pointers living across a safepoint, find their corresponding
-// bases and append a pair of (derived, base) to the inputs of sft
-static void map_derived_to_base(PhaseCFG& cfg, Node* machnull,
-                                GrowableArrayView<Node*>& derived_base_map,
-                                Node* sft, const GrowableArrayView<PhaseSpill::DistanceDatum>& live) {
+// bases and ensure that they live at the safepoint by appending them to the
+// req inputs of the safepoint
+static void stretch_base_pointers(PhaseCFG& cfg, Node* machnull,
+                                  GrowableArrayView<Node*>& derived_base_map,
+                                  Node* sft, const GrowableArrayView<PhaseSpill::DistanceDatum>& live) {
   for (int i = 0; i < live.length(); i++) {
     auto& datum = live.at(i);
     Node* n = datum.node;
@@ -337,7 +338,7 @@ static void map_derived_to_base(PhaseCFG& cfg, Node* machnull,
   }
 }
 
-static void fixup_base_derived_map(Node* sft, const GrowableArrayView<PhaseSpill::DistanceDatum>& live,
+static bool fixup_base_derived_map(Node* sft, const GrowableArrayView<PhaseSpill::DistanceDatum>& live,
                                    GrowableArray<Node*>& tmp1, GrowableArray<Node*>& tmp2) {
   // Look through all phis and copies to find the unique def if there is one
   auto get_def = [&](Node* n) {
@@ -401,14 +402,7 @@ static void fixup_base_derived_map(Node* sft, const GrowableArrayView<PhaseSpill
     }
 
     if (!n->is_MachSpillCopy()) {
-      tty->print_cr("safepoint:");
-      sft->dump();
-      for (uint i = jvms->oopoff(); i < sft->req(); i += 2) {
-        tty->print_cr("input %d:", i);
-        sft->in(i)->dump(3);
-      }
-      tty->print_cr("n:");
-      n->dump();
+      return false;
     }
     assert(n->is_MachSpillCopy() && !n->out_RegMask().is_UP() &&
            get_def(n) == n->in(1), "");
@@ -416,6 +410,7 @@ static void fixup_base_derived_map(Node* sft, const GrowableArrayView<PhaseSpill
     sft->add_req(n);
     sft->add_req(base);
   }
+  return true;
 }
 
 PhaseSpill::PhaseSpill(PhaseCFG& cfg)
@@ -453,7 +448,7 @@ PhaseSpill::PhaseSpill(PhaseCFG& cfg)
 
       live.clear();
       calculate_live(live, _live_info.at(block_idx)._liveout, block, node_idx + 1);
-      map_derived_to_base(_cfg, C->matcher()->mach_null(), derived_base_map, n, live);
+      stretch_base_pointers(_cfg, C->matcher()->mach_null(), derived_base_map, n, live);
     }
   }
 }
@@ -654,54 +649,6 @@ void PhaseSpill::do_spilling() {
     curr->disconnect_inputs(C);
   }
 
-  for (Node* spill : _spill_list) {
-    Block* early = _cfg.get_block_for_node(spill);
-    _cfg.unmap_node_from_block(spill);
-    early->find_remove(spill);
-    Block* lca = nullptr;
-    for (DUIterator_Fast imax, i = spill->fast_outs(imax); i < imax; i++) {
-      Node* out = spill->fast_out(i);
-      lca = _cfg.raise_LCA_above_use(lca, out, spill);
-    }
-    assert(early->dominates(lca), "");
-    Block* min_lca = lca;
-    if (lca != early) {
-      double min_freq = lca->_freq;
-      while (true) {
-        lca = lca->_idom;
-        if (lca->_freq < min_freq) {
-          min_lca = lca;
-          min_freq = lca->_freq;
-        }
-        if (lca == early) {
-          break;
-        }
-      }
-    }
-
-    uint insert_idx;
-    Node* spilt = spill->in(1);
-    if (_cfg.get_block_for_node(spilt) == min_lca) {
-      insert_idx = min_lca->find_node(spilt) + 1;
-      while (min_lca->get_node(insert_idx)->is_Proj()) {
-        insert_idx++;
-      }
-    } else {
-      insert_idx = 1;
-      while (true) {
-        Node* n = min_lca->get_node(insert_idx);
-        if (n->is_Proj() || n->is_Phi() ||
-            (n->is_Mach() && n->as_Mach()->ideal_Opcode() == Op_CreateEx)) {
-          insert_idx++;
-          continue;
-        }
-        break;
-      }
-    }
-    min_lca->insert_node(spill, insert_idx);
-    _cfg.map_node_to_block(spill, min_lca);
-  }
-
   compute_live();
   GrowableArray<Node*> tmp1;
   GrowableArray<Node*> tmp2;
@@ -716,16 +663,24 @@ void PhaseSpill::do_spilling() {
 
       live.clear();
       calculate_live(live, _live_info.at(block_idx)._liveout, block, node_idx + 1);
-      fixup_base_derived_map(n, live, tmp1, tmp2);
+      if (!fixup_base_derived_map(n, live, tmp1, tmp2)) {
+        tty->print("Safepoint: ");
+        n->dump();
+        tty->cr();
+        block.dump();
+        tty->print_cr("\nLive info:");
+        _live_info.at(block_idx).dump();
+        assert(false, "");
+      }
     }
   }
 
 #ifdef ASSERT
   _cfg.verify();
-  // compute_live();
-  // for (int block_idx = 1; block_idx < _blocks.length(); block_idx++) {
-  //   assert(_live_info.at(block_idx)._hrp.first_idx() == -1, "");
-  // }
+  compute_live();
+  for (int block_idx = 1; block_idx < _blocks.length(); block_idx++) {
+    assert(_live_info.at(block_idx)._hrp.first_idx() == -1, "");
+  }
 #endif // ASSERT
 }
 
@@ -1024,18 +979,24 @@ Node* SpillStatus::materialize(Block& block, Node* use, F1 create_reload, F2 reg
   VirtualNode& vir_node = _data.at(vir_idx);
   assert(vir_node._status == Status::in_register || vir_node._status == Status::reloading, "");
   if (vir_node._node != nullptr) {
+    assert(vir_node._vir_idx == vir_idx, "");
     return vir_node._node;
   }
+
   if (vir_node._status == Status::reloading) {
+    assert(vir_node._vir_idx == vir_idx, "");
     Node* res = create_reload();
     vir_node._node = res;
     register_node(block, res);
     return res;
   }
+
   int referred_idx = vir_node._vir_idx;
-  if (referred_idx != vir_idx) {
-    return referred_idx == -1 ? _spilt
-                              : materialize(*_blocks.at(referred_idx), use, create_reload, register_node);
+  if (referred_idx == -1) {
+    return _spilt;
+  } else if (referred_idx != vir_idx) {
+    assert(_data.at(referred_idx)._vir_idx == referred_idx, "");
+    return materialize(*_blocks.at(referred_idx), use, create_reload, register_node);
   }
 
   Node* res = new PhiNode(block.head(), _spilt->bottom_type());
@@ -1090,6 +1051,16 @@ void SpillStatus::update(bool optimize) {
       }
     }
   }
+
+#ifdef ASSERT
+  for (int i = 0; i < _blocks.length(); i++) {
+    Block& b = *_blocks.at(i);
+    if (&b == &_hrp_block) {
+      continue;
+    }
+    assert(!_data.at(i).update(_cfg, _data, b, i, optimize), "");
+  }
+#endif // ASSERT
 
   _data.at(hrp_entry_idx()).update(_cfg, _data, _hrp_block, hrp_entry_idx(), optimize);
 }
