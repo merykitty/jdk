@@ -1217,15 +1217,6 @@ private:
   void final_graph_reshaping_walk(Node_Stack& nstack, Node* root, Final_Reshape_Counts& frc, Unique_Node_List& dead_nodes);
   void eliminate_redundant_card_marks(Node* n);
   void handle_div_mod_op(Node* n, BasicType bt, bool is_unsigned);
-
-  // Logic cone optimization.
-  void optimize_logic_cones(PhaseIterGVN &igvn);
-  void collect_logic_cone_roots(Unique_Node_List& list);
-  void process_logic_cone_root(PhaseIterGVN &igvn, Node* n, VectorSet& visited);
-  bool compute_logic_cone(Node* n, Unique_Node_List& partition, Unique_Node_List& inputs);
-  uint compute_truth_table(Unique_Node_List& partition, Unique_Node_List& inputs);
-  uint eval_macro_logic_op(uint func, uint op1, uint op2, uint op3);
-  Node* xform_to_MacroLogicV(PhaseIterGVN &igvn, const TypeVect* vt, Unique_Node_List& partitions, Unique_Node_List& inputs);
   void check_no_dead_use() const NOT_DEBUG_RETURN;
 
  public:

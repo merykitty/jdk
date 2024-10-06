@@ -25,8 +25,11 @@
 #ifndef SHARE_OPTO_PHASE_HPP
 #define SHARE_OPTO_PHASE_HPP
 
+#include "memory/allocation.hpp"
 #include "runtime/timer.hpp"
 
+class ciMethod;
+class Compile;
 class IfNode;
 class MergeMemNode;
 class Node;
@@ -48,6 +51,7 @@ public:
     Remove_Useless_And_Renumber_Live, // First, remove useless nodes from the graph. Then, renumber live nodes.
     Optimistic,                       // Optimistic analysis phase
     GVN,                              // Pessimistic global value numbering phase
+    Lowering,                         // Mach-dependent expansion
     Ins_Select,                       // Instruction selection phase
     CFG,                              // Build a CFG
     BlockLayout,                      // Linear ordering of blocks
@@ -88,6 +92,7 @@ public:
       _t_iterGVN2,
       _t_macroExpand,
       _t_barrierExpand,
+      _t_lowering,
       _t_graphReshaping,
     _t_matcher,
       _t_postselect_cleanup,
