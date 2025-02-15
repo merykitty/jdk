@@ -32,6 +32,7 @@ import sun.nio.ch.DirectBuffer;
 
 import java.lang.reflect.Field;
 import java.security.ProtectionDomain;
+import java.util.Objects;
 
 import static jdk.internal.misc.UnsafeConstants.*;
 
@@ -48,6 +49,31 @@ import static jdk.internal.misc.UnsafeConstants.*;
  * runtime compiler, some or all checks (if any) may be elided. Hence,
  * the caller must not rely on the checks and corresponding
  * exceptions!
+ *
+ * <h2>Undefined behavior</h2>
+ *
+ * Unsafe provides unrestricted accesses to memory, thus incorrect usage
+ * will be undefined behavior. A program exhibiting undefined behavior has
+ * no restriction on its behavior. The observable symptoms may include but
+ * not be limited to:
+ * <ul>
+ * <li>Data corruption.
+ *
+ * <li>Crashing the VM.
+ *
+ * <li>Contradictory results (e.g. {@code x == 1} and {@code x == 0} being
+ * simultaneously true).
+ *
+ * <li>Impossible code execution (e.g. neither branches of an
+ * {@code if-else} construct is taken).
+ * </ul>
+ *
+ * One may notice that undefined behavior is analogous to the similar
+ * terminology in C++. This is because in both cases, the systems (the
+ * compilers, the VMs, etc) assume that the programs do not have undefined
+ * behavior, and their actions all depend on this assumption. As a result,
+ * when undefined behavior exists, the behavior of the systems become
+ * unpredictable.
  *
  * @author John R. Rose
  * @see #getUnsafe
@@ -109,7 +135,8 @@ public final class Unsafe {
      * object {@code o} at the given offset, or (if {@code o} is null)
      * from the memory address whose numerical value is the given offset.
      * <p>
-     * The results are undefined unless one of the following cases is true:
+     * The usage of this method exhibits undefined behavior unless one of
+     * the following conditions is true:
      * <ul>
      * <li>The offset was obtained from {@link #objectFieldOffset} on
      * the {@link java.lang.reflect.Field} of some Java field and the object
@@ -127,11 +154,10 @@ public final class Unsafe {
      * the values obtained by {@link #arrayBaseOffset} and {@link
      * #arrayIndexScale} (respectively) from the array's class.  The value
      * referred to is the {@code N}<em>th</em> element of the array.
-     *
      * </ul>
      * <p>
      * If one of the above cases is true, the call references a specific Java
-     * variable (field or array element).  However, the results are undefined
+     * variable (field or array element).  However, the behavior is undefined
      * if that variable is not in fact of the type returned by this method.
      * <p>
      * This method refers to a variable by means of two parameters, and so
@@ -157,7 +183,9 @@ public final class Unsafe {
      *         {@link NullPointerException}
      */
     @IntrinsicCandidate
-    public native int getInt(Object o, long offset);
+    public int getInt(Object o, long offset) {
+        return getInt0(Objects.requireNonNull(o), offset);
+    }
 
     /**
      * Stores a value into a given Java variable.
@@ -167,8 +195,8 @@ public final class Unsafe {
      * Java variable (field or array element).  The given value
      * is stored into that variable.
      * <p>
-     * The variable must be of the same type as the method
-     * parameter {@code x}.
+     * It is undefined behavior if the variable has a different type from the
+     * method parameter {@code x}.
      *
      * @param o Java heap object in which the variable resides, if any, else
      *        null
@@ -180,7 +208,9 @@ public final class Unsafe {
      *         {@link NullPointerException}
      */
     @IntrinsicCandidate
-    public native void putInt(Object o, long offset, int x);
+    public void putInt(Object o, long offset, int x) {
+        putInt0(Objects.requireNonNull(o), offset, x);
+    }
 
     /**
      * Fetches a reference value from a given Java variable.
@@ -193,7 +223,7 @@ public final class Unsafe {
      * Stores a reference value into a given Java variable.
      * <p>
      * Unless the reference {@code x} being stored is either null
-     * or matches the field type, the results are undefined.
+     * or its dynamic type matches the field type, the behavior is undefined.
      * If the reference {@code o} is non-null, card marks or
      * other store barriers for that object (if the VM requires them)
      * are updated.
@@ -204,15 +234,21 @@ public final class Unsafe {
 
     /** @see #getInt(Object, long) */
     @IntrinsicCandidate
-    public native boolean getBoolean(Object o, long offset);
+    public boolean getBoolean(Object o, long offset) {
+        return getBoolean0(Objects.requireNonNull(o), offset);
+    }
 
     /** @see #putInt(Object, long, int) */
     @IntrinsicCandidate
-    public native void    putBoolean(Object o, long offset, boolean x);
+    public void    putBoolean(Object o, long offset, boolean x) {
+        putBoolean0(Objects.requireNonNull(o), offset, x);
+    }
 
     /** @see #getInt(Object, long) */
     @IntrinsicCandidate
-    public native byte    getByte(Object o, long offset);
+    public byte    getByte(Object o, long offset) {
+        return getByte0(Objects.requireNonNull(o), offset);
+    }
 
     /** @see #putInt(Object, long, int) */
     @IntrinsicCandidate
@@ -261,7 +297,7 @@ public final class Unsafe {
     /**
      * Fetches a native pointer from a given memory address.  If the address is
      * zero, or does not point into a block obtained from {@link
-     * #allocateMemory}, the results are undefined.
+     * #allocateMemory}, the behavior is undefined.
      *
      * <p>If the native pointer is less than 64 bits wide, it is extended as
      * an unsigned number to a Java long.  The pointer may be indexed by any
@@ -285,7 +321,7 @@ public final class Unsafe {
     /**
      * Stores a native pointer into a given memory address.  If the address is
      * zero, or does not point into a block obtained from {@link
-     * #allocateMemory}, the results are undefined.
+     * #allocateMemory}, the behavior is undefined.
      *
      * <p>The number of bytes actually written at the target address may be
      * determined by consulting {@link #addressSize}.
@@ -318,7 +354,7 @@ public final class Unsafe {
     /**
      * Fetches a value from a given memory address.  If the address is zero, or
      * does not point into a block obtained from {@link #allocateMemory}, the
-     * results are undefined.
+     * behavior is undefined.
      *
      * @see #allocateMemory
      */
@@ -330,7 +366,7 @@ public final class Unsafe {
     /**
      * Stores a value into a given memory address.  If the address is zero, or
      * does not point into a block obtained from {@link #allocateMemory}, the
-     * results are undefined.
+     * behavior is undefined.
      *
      * @see #getByte(long)
      */
@@ -3502,19 +3538,19 @@ public final class Unsafe {
 
     /**
      * Fetches a value at some byte offset into a given Java object.
-     * More specifically, fetches a value within the given object
-     * <code>o</code> at the given offset, or (if <code>o</code> is
-     * null) from the memory address whose numerical value is the
-     * given offset.  <p>
+     * More specifically, fetches a value within the given object {@code o} at
+     * the given offset, or (if {@code o} is null) from the memory address
+     * whose numerical value is the given offset.
+     * <p>
+     * The usage of this method exhibits undefined behavior unless one of the
+     * following conditions is true:
+     * <ul>
+     * <li>{@code o} is not {@code null} and the accessed memory lies entirely
+     * within the object referred to by {@code o}.
      *
-     * The specification of this method is the same as {@link
-     * #getLong(Object, long)} except that the offset does not need to
-     * have been obtained from {@link #objectFieldOffset} on the
-     * {@link java.lang.reflect.Field} of some Java field.  The value
-     * in memory is raw data, and need not correspond to any Java
-     * variable.  Unless <code>o</code> is null, the value accessed
-     * must be entirely within the allocated object.  The endianness
-     * of the value in memory is the endianness of the native platform.
+     * <li>{@code o} is {@code null} and {@code offset} is the address that
+     * points into a block obtained from {@link #allocateMemory(long)}.
+     * </ul>
      *
      * <p> The read will be atomic with respect to the largest power
      * of two that divides the GCD of the offset and the storage size.
@@ -3625,13 +3661,22 @@ public final class Unsafe {
     /**
      * Stores a value at some byte offset into a given Java object.
      * <p>
-     * The specification of this method is the same as {@link
-     * #getLong(Object, long)} except that the offset does not need to
-     * have been obtained from {@link #objectFieldOffset} on the
-     * {@link java.lang.reflect.Field} of some Java field.  The value
-     * in memory is raw data, and need not correspond to any Java
-     * variable.  The endianness of the value in memory is the
-     * endianness of the native platform.
+     * The usage of this method exhibits undefined behavior unless one of
+     * the following conditions is true:
+     * <ul>
+     * <li>{@code o} is not {@code null} and the arguments satisfy that
+     * {@code putLong(o, offset, x)} is well-defined.
+     *
+     * <li>{@code o} is an array of primitives and {@code offset} satisfies
+     * that {@code offset >= B} and {@code offset <= B+L*S-W} where {@code B}
+     * and {@code S} are the values obtained by {@link #arrayBaseOffset} and
+     * {@link #arrayIndexScale} from the array's class, respectively; {@code L}
+     * is the length of the array; and {@code W} is the width in bytes of the
+     * access (8 for {@code long}).
+     *
+     * <li>{@code o} is {@code null} and {@code offset} is the address that
+     * points into a block obtained from {@link #allocateMemory(long)}.
+     * </ul>
      * <p>
      * The write will be atomic with respect to the largest power of
      * two that divides the GCD of the offset and the storage size.
@@ -3834,7 +3879,22 @@ public final class Unsafe {
     private static int convEndian(boolean big, int n)     { return big == BIG_ENDIAN ? n : Integer.reverseBytes(n)  ; }
     private static long convEndian(boolean big, long n)   { return big == BIG_ENDIAN ? n : Long.reverseBytes(n)     ; }
 
-
+    private native boolean getBoolean0(Object o, long offset);
+    private native byte    getByte0   (Object o, long offset);
+    private native short   getShort0  (Object o, long offset);
+    private native char    getChar0   (Object o, long offset);
+    private native int     getInt0    (Object o, long offset);
+    private native long    getLong0   (Object o, long offset);
+    private native float   getFloat0  (Object o, long offset);
+    private native double  getDouble0 (Object o, long offset);
+    private native void    putBoolean0(Object o, long offset, boolean x);
+    private native void    putByte0   (Object o, long offset, byte x);
+    private native void    putShort0  (Object o, long offset, short x);
+    private native void    putChar0   (Object o, long offset, char x);
+    private native void    putInt0    (Object o, long offset, int x);
+    private native void    putLong0   (Object o, long offset, long x);
+    private native void    putFloat0  (Object o, long offset, float x);
+    private native void    putDouble0 (Object o, long offset, double x);
 
     private native long allocateMemory0(long bytes);
     private native long reallocateMemory0(long address, long bytes);
