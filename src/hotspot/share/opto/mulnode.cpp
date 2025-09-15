@@ -29,6 +29,7 @@
 #include "opto/memnode.hpp"
 #include "opto/mulnode.hpp"
 #include "opto/phaseX.hpp"
+#include "opto/rangeinference.hpp"
 #include "opto/subnode.hpp"
 #include "utilities/powerOfTwo.hpp"
 
@@ -697,11 +698,8 @@ static const IntegerType* and_value(const IntegerType* r0, const IntegerType* r1
 // For the logical operations the ring's MUL is really a logical AND function.
 // This also type-checks the inputs for sanity.  Guaranteed never to
 // be passed a TOP or BOTTOM type, these are filtered out by pre-check.
-const Type *AndINode::mul_ring( const Type *t0, const Type *t1 ) const {
-  const TypeInt* r0 = t0->is_int();
-  const TypeInt* r1 = t1->is_int();
-
-  return and_value<TypeInt>(r0, r1);
+const Type* AndINode::mul_ring(const Type* t0, const Type* t1) const {
+  return RangeInference::infer_and(t0->is_int(), t1->is_int());
 }
 
 static bool AndIL_is_zero_element_under_mask(const PhaseGVN* phase, const Node* expr, const Node* mask, BasicType bt);
@@ -830,11 +828,8 @@ Node *AndINode::Ideal(PhaseGVN *phase, bool can_reshape) {
 // For the logical operations the ring's MUL is really a logical AND function.
 // This also type-checks the inputs for sanity.  Guaranteed never to
 // be passed a TOP or BOTTOM type, these are filtered out by pre-check.
-const Type *AndLNode::mul_ring( const Type *t0, const Type *t1 ) const {
-  const TypeLong* r0 = t0->is_long();
-  const TypeLong* r1 = t1->is_long();
-
-  return and_value<TypeLong>(r0, r1);
+const Type* AndLNode::mul_ring(const Type* t0, const Type* t1) const {
+  return RangeInference::infer_and(t0->is_long(), t1->is_long());
 }
 
 const Type* AndLNode::Value(PhaseGVN* phase) const {

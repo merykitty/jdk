@@ -212,3 +212,28 @@ TEST_VM(opto, canonicalize_constraints) {
   test_canonicalize_constraints_random<jint, juint>();
   test_canonicalize_constraints_random<jlong, julong>();
 }
+
+template <class S, class U>
+class TypeIntMirror {
+public:
+  S _lo;
+  S _hi;
+  U _ulo;
+  U _uhi;
+  KnownBits<U> _bits;
+
+  static TypeIntMirror make(const TypeIntPrototype<jint, juint>& t, int widen) {
+    auto canonicalized_t = t.canonicalize_constraints();
+    assert(!canonicalized_t.empty(), "must not be empty");
+    return TypeIntMirror{canonicalized_t._data._srange._lo, canonicalized_t._data._srange._hi,
+                         canonicalized_t._data._urange._lo, canonicalized_t._data._urange._hi,
+                         {canonicalized_t._data._bits._zeros, canonicalized_t._data._bits._ones}};
+  }
+
+  // This allows TypeIntMirror to mimick the behaviors of TypeInt* and TypeLong*
+  TypeIntMirror* operator->() {
+    return this;
+  }
+};
+
+

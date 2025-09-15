@@ -26,7 +26,9 @@
 #define SHARE_OPTO_RANGEINFERENCE_HPP
 
 #include "utilities/globalDefinitions.hpp"
+#include "utilities/ostream.hpp"
 
+#include <limits>
 #include <type_traits>
 
 class outputStream;
@@ -96,6 +98,9 @@ public:
 private:
   friend class TypeInt;
   friend class TypeLong;
+
+  template <class T1, class T2>
+  friend class TypeIntMirror;
 
   template <class T1, class T2>
   friend void test_canonicalize_constraints_exhaustive();
@@ -194,6 +199,41 @@ public:
   static void int_type_dump(const TypeInt* t, outputStream* st, bool verbose);
   static void int_type_dump(const TypeLong* t, outputStream* st, bool verbose);
 #endif // PRODUCT
+};
+
+// This class contains methods for inferring the Type of the result of several arithmetic
+// operations from those of the corresponding inputs. For example, given a, b such that the Type of
+// a is [0, 1] and the Type of b is [-1, 3], then the Type of the sum a + b is [-1, 4].
+// The methods in this class receive one or more template parameters which are often TypeInt* or
+// TypeLong*, or they can be special helper classes which behave similar to TypeInt* and TypeLong*.
+// This allows us to verify the correctness of the implementation without coupling with the
+// hotspot compiler allocation infrastructure. 
+class RangeInference {
+private:
+  // If CTP is a pointer, get the underlying type. For the test helper classes, using the struct
+  // directly allows straightfoward equality comparison.
+  template <class CTP>
+  using CT = std::conditional_t<std::is_pointer_v<CTP>, std::remove_pointer_t<CTP>, CTP>;
+
+  // The type of CT::_lo, should be jint for TypeInt* and jlong for TypeLong*
+  template <class CTP>
+  using S = std::remove_const_t<decltype(CT<CTP>::_lo)>;
+
+  // The type of CT::_ulo, should be juint for TypeInt* and julong for TypeLong*
+  template <class CTP>
+  using U = std::remove_const_t<decltype(CT<CTP>::_ulo)>;
+
+public:
+  template <class CTP>
+  static CTP infer_and(CTP t1, CTP t2) {
+    S<CTP> lo = std::numeric_limits<S<CTP>>::min();
+    S<CTP> hi = std::numeric_limits<S<CTP>>::max();
+    U<CTP> ulo = std::numeric_limits<U<CTP>>::min();
+    U<CTP> uhi = MIN2(t1->_uhi, t2->_uhi);
+    U<CTP> zeros = t1->_bits._zeros | t2->_bits._zeros;
+    U<CTP> ones = t1->_bits._ones & t2->_bits._ones;
+    return CT<CTP>::make(TypeIntPrototype<S<CTP>, U<CTP>>{{lo, hi}, {ulo, uhi}, {zeros, ones}}, MAX2(t1->_widen, t2->_widen));
+  }
 };
 
 #endif // SHARE_OPTO_RANGEINFERENCE_HPP
