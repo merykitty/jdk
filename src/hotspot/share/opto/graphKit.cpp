@@ -3656,11 +3656,17 @@ Node* GraphKit::set_output_for_allocation(AllocateNode* alloc,
       ciInstanceKlass* ik = oop_type->is_instptr()->instance_klass();
       for (int i = 0, len = ik->nof_nonstatic_fields(); i < len; i++) {
         ciField* field = ik->nonstatic_field_at(i);
-        if (field->offset_in_bytes() >= TrackedInitializationLimit * HeapWordSize)
+        if (field->offset_in_bytes() >= TrackedInitializationLimit * HeapWordSize) {
           continue;  // do not bother to track really large numbers of fields
+        }
         // Find (or create) the alias category for this field:
-        int fieldidx = C->alias_type(field)->index();
-        hook_memory_on_init(*this, fieldidx, minit_in, _gvn.transform(new NarrowMemProjNode(init, C->get_adr_type(fieldidx))));
+        int fieldidx = C->get_alias_index(TypeInstPtr::make(TypePtr::NotNull, ik)->with_offset(field->offset_in_bytes()));
+        const TypePtr* alias_adr_type = C->get_adr_type(fieldidx);
+        hook_memory_on_init(*this, fieldidx, minit_in, _gvn.transform(new NarrowMemProjNode(init, alias_adr_type)));
+        if (alias_adr_type->offset() == Type::OffsetBot) {
+          // This alias class covers the whole object
+          break;
+        }
       }
     }
   }
@@ -4154,9 +4160,10 @@ void GraphKit::store_String_coder(Node* str, Node* value) {
 }
 
 // Capture src and dst memory state with a MergeMemNode
-Node* GraphKit::capture_memory(const TypePtr* src_type, const TypePtr* dst_type) {
+Node* GraphKit::capture_memory(const TypePtr*& res_type, const TypePtr* src_type, const TypePtr* dst_type) {
   if (src_type == dst_type) {
     // Types are equal, we don't need a MergeMemNode
+    res_type = src_type;
     return memory(src_type);
   }
   MergeMemNode* merge = MergeMemNode::make(map()->memory());
@@ -4165,6 +4172,7 @@ Node* GraphKit::capture_memory(const TypePtr* src_type, const TypePtr* dst_type)
   int dst_idx = C->get_alias_index(dst_type);
   merge->set_memory_at(src_idx, memory(src_idx));
   merge->set_memory_at(dst_idx, memory(dst_idx));
+  res_type = TypePtr::BOTTOM;
   return merge;
 }
 
@@ -4184,8 +4192,9 @@ Node* GraphKit::compress_string(Node* src, const TypeAryPtr* src_type, Node* dst
   // the load to read from memory not containing the result of the StoreB.
   // The correct memory graph should look like this:
   //  LoadB -> compress_string -> MergeMem(CharMem, StoreB(ByteMem))
-  Node* mem = capture_memory(src_type, TypeAryPtr::BYTES);
-  StrCompressedCopyNode* str = new StrCompressedCopyNode(control(), mem, src, dst, count);
+  const TypePtr* adr_type;
+  Node* mem = capture_memory(adr_type, src_type, TypeAryPtr::BYTES);
+  StrCompressedCopyNode* str = new StrCompressedCopyNode(control(), mem, adr_type, src, dst, count);
   Node* res_mem = _gvn.transform(new SCMemProjNode(_gvn.transform(str)));
   set_memory(res_mem, TypeAryPtr::BYTES);
   return str;
@@ -4195,8 +4204,9 @@ void GraphKit::inflate_string(Node* src, Node* dst, const TypeAryPtr* dst_type, 
   assert(Matcher::match_rule_supported(Op_StrInflatedCopy), "Intrinsic not supported");
   assert(dst_type == TypeAryPtr::BYTES || dst_type == TypeAryPtr::CHARS, "invalid dest type");
   // Capture src and dst memory (see comment in 'compress_string').
-  Node* mem = capture_memory(TypeAryPtr::BYTES, dst_type);
-  StrInflatedCopyNode* str = new StrInflatedCopyNode(control(), mem, src, dst, count);
+  const TypePtr* adr_type;
+  Node* mem = capture_memory(adr_type, TypeAryPtr::BYTES, dst_type);
+  StrInflatedCopyNode* str = new StrInflatedCopyNode(control(), mem, adr_type, src, dst, count);
   set_memory(_gvn.transform(str), dst_type);
 }
 

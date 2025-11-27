@@ -38,6 +38,7 @@
 #include "oops/methodData.hpp"
 #include "opto/idealGraphPrinter.hpp"
 #include "opto/phase.hpp"
+#include "opto/phasealias.hpp"
 #include "opto/phasetype.hpp"
 #include "opto/printinlining.hpp"
 #include "opto/regmask.hpp"
@@ -249,31 +250,26 @@ class Compile : public Phase {
   // Information per category of alias (memory slice)
   class AliasType {
    private:
+    friend class AliasAnalyzer;
     friend class Compile;
+    friend class PhaseAliasAnalysis;
 
     int             _index;         // unique index, used with MergeMemNode
     const TypePtr*  _adr_type;      // normalized address type
+    int             _size;          // The size of the represented memory slice (e.g. 4 for an int slice)
     ciField*        _field;         // relevant instance field, or null if none
     const Type*     _element;       // relevant array element type, or null if none
     bool            _is_rewritable; // false if the memory is write-once only
     int             _general_index; // if this is type is an instance, the general
                                     // type that this is an instance of
 
-    void Init(int i, const TypePtr* at);
-
-   public:
-    int             index()         const { return _index; }
-    const TypePtr*  adr_type()      const { return _adr_type; }
-    ciField*        field()         const { return _field; }
-    const Type*     element()       const { return _element; }
-    bool            is_rewritable() const { return _is_rewritable; }
-    bool            is_volatile()   const { return (_field ? _field->is_volatile() : false); }
-    int             general_index() const { return (_general_index != 0) ? _general_index : _index; }
-
+    void Init(int i, const TypePtr* at, int size);
     void set_rewritable(bool z) { _is_rewritable = z; }
     void set_field(ciField* f) {
-      assert(!_field,"");
+      assert(_field == nullptr, "");
+      assert(f->size_in_bytes() >= _size, "");
       _field = f;
+      _size = f->size_in_bytes();
       if (f->is_final() || f->is_stable()) {
         // In the case of @Stable, multiple writes are possible but may be assumed to be no-ops.
         _is_rewritable = false;
@@ -283,6 +279,15 @@ class Compile : public Phase {
       assert(_element == nullptr, "");
       _element = e;
     }
+
+   public:
+    int             index()         const { return _index; }
+    const TypePtr*  adr_type()      const { return _adr_type; }
+    ciField*        field()         const { return _field; }
+    const Type*     element()       const { return _element; }
+    bool            is_rewritable() const { return _is_rewritable; }
+    bool            is_volatile()   const { return (_field ? _field->is_volatile() : false); }
+    int             general_index() const { return (_general_index != 0) ? _general_index : _index; }
 
     BasicType basic_type() const;
 
@@ -387,6 +392,7 @@ class Compile : public Phase {
   GrowableArray<Node*>  _for_post_loop_igvn;    // List of nodes for IGVN after loop opts are over
   GrowableArray<Node*>  _for_merge_stores_igvn; // List of nodes for IGVN merge stores
   GrowableArray<UnstableIfTrap*> _unstable_if_traps;        // List of ifnodes after IGVN
+  AliasAnalyzer         _alias;                 // Memory analyzer for oop accesses
   GrowableArray<Node_List*> _coarsened_locks;   // List of coarsened Lock and Unlock nodes
   ConnectionGraph*      _congraph;
 #ifndef PRODUCT
@@ -964,12 +970,13 @@ public:
 
   AliasType*        alias_type(int                idx)  { assert(idx < num_alias_types(), "oob"); return _alias_types[idx]; }
   AliasType*        alias_type(const TypePtr* adr_type, ciField* field = nullptr) { return find_alias_type(adr_type, false, field); }
+  void          add_alias_type(const AliasType& new_alias);
   bool         have_alias_type(const TypePtr* adr_type);
-  AliasType*        alias_type(ciField*         field);
 
   int               get_alias_index(const TypePtr* at)  { return alias_type(at)->index(); }
   const TypePtr*    get_adr_type(uint aidx)             { return alias_type(aidx)->adr_type(); }
   int               get_general_index(uint aidx)        { return alias_type(aidx)->general_index(); }
+  void              clear_alias_cache();
 
   // Building nodes
   void              rethrow_exceptions(JVMState* jvms);
@@ -1209,7 +1216,7 @@ public:
   // Management of the AliasType table.
   void grow_alias_types();
   AliasCacheEntry* probe_alias_cache(const TypePtr* adr_type);
-  const TypePtr *flatten_alias_type(const TypePtr* adr_type) const;
+  const TypePtr* flatten_alias_type(const TypePtr* adr_type);
   AliasType* find_alias_type(const TypePtr* adr_type, bool no_create, ciField* field);
 
   void verify_top(Node*) const PRODUCT_RETURN;

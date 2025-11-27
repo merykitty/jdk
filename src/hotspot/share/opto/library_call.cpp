@@ -1121,7 +1121,7 @@ bool LibraryCallKit::inline_array_equals(StrIntrinsicNode::ArgEnc ae) {
   Node* arg2 = argument(1);
 
   const TypeAryPtr* mtype = (ae == StrIntrinsicNode::UU) ? TypeAryPtr::CHARS : TypeAryPtr::BYTES;
-  set_result(_gvn.transform(new AryEqNode(control(), memory(mtype), arg1, arg2, ae)));
+  set_result(_gvn.transform(new AryEqNode(control(), memory(mtype), mtype, arg1, arg2, ae)));
   clear_upper_avx();
 
   return true;
@@ -4366,7 +4366,7 @@ Node* LibraryCallKit::generate_array_guard_common(Node* kls, RegionNode* region,
   if (obj != nullptr && is_array_ctrl != nullptr && is_array_ctrl != top()) {
     // Keep track of the fact that 'obj' is an array to prevent
     // array specific accesses from floating above the guard.
-    *obj = _gvn.transform(new CastPPNode(is_array_ctrl, *obj, TypeAryPtr::BOTTOM));
+    *obj = _gvn.transform(new CheckCastPPNode(is_array_ctrl, *obj, TypeAryPtr::BOTTOM));
   }
   return ctrl;
 }
@@ -6196,11 +6196,12 @@ bool LibraryCallKit::inline_encodeISOArray(bool ascii) {
   // 'src_start' points to src array + scaled offset
   // 'dst_start' points to dst array + scaled offset
 
-  const TypeAryPtr* mtype = TypeAryPtr::BYTES;
-  Node* enc = new EncodeISOArrayNode(control(), memory(mtype), src_start, dst_start, length, ascii);
+  const TypePtr* adr_type;
+  Node* mem = capture_memory(adr_type, src_type, dst_type);
+  Node* enc = new EncodeISOArrayNode(control(), mem, adr_type, src_start, dst_start, length, ascii);
   enc = _gvn.transform(enc);
   Node* res_mem = _gvn.transform(new SCMemProjNode(enc));
-  set_memory(res_mem, mtype);
+  set_memory(res_mem, TypeAryPtr::BYTES);
   set_result(enc);
   clear_upper_avx();
 
@@ -6678,8 +6679,8 @@ bool LibraryCallKit::inline_vectorizedHashCode() {
 
   // Resolve address of first element
   Node* array_start = array_element_address(array, offset, bt);
-
-  set_result(_gvn.transform(new VectorizedHashCodeNode(control(), memory(TypeAryPtr::get_array_body_type(bt)),
+  const TypeAryPtr* adr_type = TypeAryPtr::get_array_body_type(bt);
+  set_result(_gvn.transform(new VectorizedHashCodeNode(control(), memory(adr_type), adr_type,
     array_start, length, initialValue, basic_type)));
   clear_upper_avx();
 
@@ -7114,10 +7115,8 @@ Node* LibraryCallKit::load_field_from_object(Node* fromObj, const char* fieldNam
   bool is_vol = field->is_volatile();
   ciType* field_klass = field->type();
   assert(field_klass->is_loaded(), "should be loaded");
-  const TypePtr* adr_type = C->alias_type(field)->adr_type();
-  Node *adr = basic_plus_adr(fromObj, fromObj, offset);
-  assert(C->get_alias_index(adr_type) == C->get_alias_index(_gvn.type(adr)->isa_ptr()),
-    "slice of address and input slice don't match");
+  Node* adr = basic_plus_adr(fromObj, fromObj, offset);
+  const TypePtr* adr_type = _gvn.type(adr)->is_ptr();
   BasicType bt = field->layout_type();
 
   // Build the resultant type of the load
@@ -9085,8 +9084,8 @@ Node* LibraryCallKit::unbox_fp16_value(const TypeInstPtr* float16_box_type, ciFi
     return nullptr;
   }
   assert(not_null_box->bottom_type()->is_instptr()->maybe_null() == false, "");
-  const TypePtr* adr_type = C->alias_type(field)->adr_type();
   Node* adr = basic_plus_adr(not_null_box, field->offset_in_bytes());
+  const TypePtr* adr_type = _gvn.type(adr)->is_ptr();
   return access_load_at(not_null_box, adr, adr_type, TypeInt::SHORT, T_SHORT, IN_HEAP);
 }
 

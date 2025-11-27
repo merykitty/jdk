@@ -46,6 +46,8 @@
   flags(INLINE_VECTOR_REBOX,            "Inline Vector Rebox Calls") \
   flags(EXPAND_VBOX,                    "Expand VectorBox") \
   flags(ELIMINATE_VBOX_ALLOC,           "Eliminate VectorBoxAllocate") \
+  flags(BEFORE_ALIAS_ANALYSIS,          "Before Alias Analysis") \
+  flags(AFTER_ALIAS_ANALYSIS,           "After Alias Analysis") \
   flags(ITER_GVN_BEFORE_EA,             "Iter GVN before EA") \
   flags(ITER_GVN_AFTER_VECTOR,          "Iter GVN after Vector Box Elimination") \
   flags(BEFORE_LOOP_OPTS,               "Before Loop Optimizations") \

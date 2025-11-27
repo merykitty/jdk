@@ -53,6 +53,7 @@
 #include "utilities/align.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/macros.hpp"
+#include "utilities/ostream.hpp"
 #include "utilities/powerOfTwo.hpp"
 #include "utilities/vmError.hpp"
 
@@ -3393,16 +3394,6 @@ Node *StoreNode::Ideal(PhaseGVN *phase, bool can_reshape) {
     while (st->is_Store() && st->outcnt() == 1) {
       // Looking at a dead closed cycle of memory?
       assert(st != st->in(MemNode::Memory), "dead loop in StoreNode::Ideal");
-      assert(Opcode() == st->Opcode() ||
-             st->Opcode() == Op_StoreVector ||
-             Opcode() == Op_StoreVector ||
-             st->Opcode() == Op_StoreVectorScatter ||
-             Opcode() == Op_StoreVectorScatter ||
-             phase->C->get_alias_index(adr_type()) == Compile::AliasIdxRaw ||
-             (Opcode() == Op_StoreL && st->Opcode() == Op_StoreI) || // expanded ClearArrayNode
-             (Opcode() == Op_StoreI && st->Opcode() == Op_StoreL) || // initialization by arraycopy
-             (is_mismatched_access() || st->as_Store()->is_mismatched_access()),
-             "no mismatched stores, except on raw memory: %s %s", NodeClassNames[Opcode()], NodeClassNames[st->Opcode()]);
 
       if (st->in(MemNode::Address)->eqv_uncast(address) &&
           st->as_Store()->memory_size() <= this->memory_size()) {
@@ -3992,6 +3983,12 @@ MemBarNode* LoadStoreNode::trailing_membar() const {
 }
 
 uint LoadStoreNode::size_of() const { return sizeof(*this); }
+
+#ifndef PRODUCT
+void LoadStoreNode::dump_spec(outputStream* st) const {
+  MemNode::dump_adr_type(adr_type(), st);
+}
+#endif
 
 //=============================================================================
 //----------------------------------LoadStoreConditionalNode--------------------

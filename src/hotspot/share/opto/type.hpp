@@ -1369,6 +1369,9 @@ protected:
 #endif // PRODUCT
 
 public:
+  const TypeInterfaces* interfaces() const {
+    return _interfaces;
+  };
 
   bool is_java_subtype_of(const TypeOopPtr* other) const {
     return is_java_subtype_of_helper(other, klass_is_exact(), other->klass_is_exact());
@@ -1473,10 +1476,6 @@ private:
   virtual bool is_meet_subtype_of_helper(const TypeOopPtr* other, bool this_xk, bool other_xk) const {
     ShouldNotReachHere(); return false;
   }
-
-  virtual const TypeInterfaces* interfaces() const {
-    return _interfaces;
-  };
 
   const TypeOopPtr* is_reference_type(const Type* other) const {
     return other->isa_oopptr();

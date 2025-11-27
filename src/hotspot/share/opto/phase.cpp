@@ -62,6 +62,7 @@ void Phase::print_timers() {
 
   {
     tty->print_cr ("       Optimize:            %7.3f s", timers[_t_optimizer].seconds());
+    tty->print_cr ("         Alias Analysis:      %7.3f s", timers[_t_aliasAnalysis].seconds());
     if (DoEscapeAnalysis) {
       // EA is part of Optimizer.
       tty->print_cr ("         Escape Analysis:     %7.3f s", timers[_t_escapeAnalysis].seconds());
@@ -99,7 +100,8 @@ void Phase::print_timers() {
     tty->print_cr ("         Graph Reshape:       %7.3f s", timers[_t_graphReshaping].seconds());
 
     double other = timers[_t_optimizer].seconds() -
-      (timers[_t_escapeAnalysis].seconds() +
+      (timers[_t_aliasAnalysis].seconds() +
+       timers[_t_escapeAnalysis].seconds() +
        timers[_t_iterGVN].seconds() +
        timers[_t_incrInline].seconds() +
        timers[_t_vector].seconds() +

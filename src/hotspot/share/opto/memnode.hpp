@@ -30,6 +30,7 @@
 #include "opto/node.hpp"
 #include "opto/opcodes.hpp"
 #include "opto/type.hpp"
+#include "utilities/macros.hpp"
 
 // Portions of code courtesy of Clifford Click
 
@@ -832,6 +833,7 @@ public:
 
   uint8_t barrier_data() { return _barrier_data; }
   void set_barrier_data(uint8_t barrier_data) { _barrier_data = barrier_data; }
+  NOT_PRODUCT(virtual void dump_spec(outputStream *st) const;)
 };
 
 class LoadStoreConditionalNode : public LoadStoreNode {

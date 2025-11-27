@@ -224,12 +224,10 @@ Node* ArrayCopyNode::try_clone_instance(PhaseGVN *phase, bool can_reshape, int c
   BarrierSetC2* bs = BarrierSet::barrier_set()->barrier_set_c2();
   for (int i = 0; i < count; i++) {
     ciField* field = ik->nonstatic_field_at(i);
-    const TypePtr* adr_type = phase->C->alias_type(field)->adr_type();
     Node* off = phase->MakeConX(field->offset_in_bytes());
     Node* next_src = phase->transform(new AddPNode(base_src,base_src,off));
     Node* next_dest = phase->transform(new AddPNode(base_dest,base_dest,off));
-    assert(phase->C->get_alias_index(adr_type) == phase->C->get_alias_index(phase->type(next_src)->isa_ptr()),
-      "slice of address and input slice don't match");
+    const TypePtr* adr_type = phase->type(next_src)->is_ptr();
     assert(phase->C->get_alias_index(adr_type) == phase->C->get_alias_index(phase->type(next_dest)->isa_ptr()),
       "slice of address and input slice don't match");
     BasicType bt = field->layout_type();

@@ -45,6 +45,8 @@
 #include "memory/allocation.hpp"
 #include "memory/arena.hpp"
 #include "memory/resourceArea.hpp"
+#include "oops/arrayOop.hpp"
+#include "oops/oop.hpp"
 #include "opto/addnode.hpp"
 #include "opto/block.hpp"
 #include "opto/c2compiler.hpp"
@@ -73,7 +75,10 @@
 #include "opto/opcodes.hpp"
 #include "opto/output.hpp"
 #include "opto/parse.hpp"
+#include "opto/phase.hpp"
 #include "opto/phaseX.hpp"
+#include "opto/phasealias.hpp"
+#include "opto/phasetype.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
 #include "opto/stringopts.hpp"
@@ -666,6 +671,7 @@ Compile::Compile(ciEnv* ci_env, ciMethod* target, int osr_bci,
       _for_post_loop_igvn(comp_arena(), 8, 0, nullptr),
       _for_merge_stores_igvn(comp_arena(), 8, 0, nullptr),
       _unstable_if_traps(comp_arena(), 8, 0, nullptr),
+      _alias(),
       _coarsened_locks(comp_arena(), 8, 0, nullptr),
       _congraph(nullptr),
       NOT_PRODUCT(_igv_printer(nullptr) COMMA)
@@ -934,6 +940,7 @@ Compile::Compile(ciEnv* ci_env,
       _first_failure_details(nullptr),
       _for_post_loop_igvn(comp_arena(), 8, 0, nullptr),
       _for_merge_stores_igvn(comp_arena(), 8, 0, nullptr),
+      _alias(),
       _congraph(nullptr),
       NOT_PRODUCT(_igv_printer(nullptr) COMMA)
           _unique(0),
@@ -1115,9 +1122,9 @@ void Compile::Init(bool aliasing) {
     for (int i = 0; i < grow_ats; i++)  _alias_types[i] = &ats[i];
   }
   // Initialize the first few types.
-  _alias_types[AliasIdxTop]->Init(AliasIdxTop, nullptr);
-  _alias_types[AliasIdxBot]->Init(AliasIdxBot, TypePtr::BOTTOM);
-  _alias_types[AliasIdxRaw]->Init(AliasIdxRaw, TypeRawPtr::BOTTOM);
+  _alias_types[AliasIdxTop]->Init(AliasIdxTop, nullptr, 0);
+  _alias_types[AliasIdxBot]->Init(AliasIdxBot, TypePtr::BOTTOM, 0);
+  _alias_types[AliasIdxRaw]->Init(AliasIdxRaw, TypeRawPtr::BOTTOM, 0);
   _num_alias_types = AliasIdxRaw+1;
   // Zero out the alias type cache.
   Copy::zero_to_bytes(_alias_cache, sizeof(_alias_cache));
@@ -1334,170 +1341,25 @@ bool Compile::allow_range_check_smearing() const {
 
 
 //------------------------------flatten_alias_type-----------------------------
-const TypePtr *Compile::flatten_alias_type( const TypePtr *tj ) const {
+const TypePtr* Compile::flatten_alias_type(const TypePtr* tj) {
   assert(do_aliasing(), "Aliasing should be enabled");
   int offset = tj->offset();
   TypePtr::PTR ptr = tj->ptr();
 
-  // Known instance (scalarizable allocation) alias only with itself.
-  bool is_known_inst = tj->isa_oopptr() != nullptr &&
-                       tj->is_oopptr()->is_known_instance();
-
-  // Process weird unsafe references.
-  if (offset == Type::OffsetBot && (tj->isa_instptr() /*|| tj->isa_klassptr()*/)) {
-    assert(InlineUnsafeOps || StressReflectiveCode, "indeterminate pointers come only from unsafe ops");
-    assert(!is_known_inst, "scalarizable allocation should not have unsafe references");
-    tj = TypeOopPtr::BOTTOM;
-    ptr = tj->ptr();
-    offset = tj->offset();
-  }
-
-  // Array pointers need some flattening
-  const TypeAryPtr* ta = tj->isa_aryptr();
-  if (ta && ta->is_stable()) {
-    // Erase stability property for alias analysis.
-    tj = ta = ta->cast_to_stable(false);
-  }
-  if( ta && is_known_inst ) {
-    if ( offset != Type::OffsetBot &&
-         offset > arrayOopDesc::length_offset_in_bytes() ) {
-      offset = Type::OffsetBot; // Flatten constant access into array body only
-      tj = ta = ta->
-              remove_speculative()->
-              cast_to_ptr_type(ptr)->
-              with_offset(offset);
-    }
-  } else if (ta) {
-    // For arrays indexed by constant indices, we flatten the alias
-    // space to include all of the array body.  Only the header, klass
-    // and array length can be accessed un-aliased.
-    if( offset != Type::OffsetBot ) {
-      if( ta->const_oop() ) { // MethodData* or Method*
-        offset = Type::OffsetBot;   // Flatten constant access into array body
-        tj = ta = ta->
-                remove_speculative()->
-                cast_to_ptr_type(ptr)->
-                cast_to_exactness(false)->
-                with_offset(offset);
-      } else if( offset == arrayOopDesc::length_offset_in_bytes() ) {
-        // range is OK as-is.
-        tj = ta = TypeAryPtr::RANGE;
-      } else if( offset == oopDesc::klass_offset_in_bytes() ) {
-        tj = TypeInstPtr::KLASS; // all klass loads look alike
-        ta = TypeAryPtr::RANGE; // generic ignored junk
-        ptr = TypePtr::BotPTR;
-      } else if( offset == oopDesc::mark_offset_in_bytes() ) {
-        tj = TypeInstPtr::MARK;
-        ta = TypeAryPtr::RANGE; // generic ignored junk
-        ptr = TypePtr::BotPTR;
-      } else {                  // Random constant offset into array body
-        offset = Type::OffsetBot;   // Flatten constant access into array body
-        tj = ta = ta->
-                remove_speculative()->
-                cast_to_ptr_type(ptr)->
-                cast_to_exactness(false)->
-                with_offset(offset);
-      }
-    }
-    // Arrays of fixed size alias with arrays of unknown size.
-    if (ta->size() != TypeInt::POS) {
-      const TypeAry *tary = TypeAry::make(ta->elem(), TypeInt::POS);
-      tj = ta = ta->
-              remove_speculative()->
-              cast_to_ptr_type(ptr)->
-              with_ary(tary)->
-              cast_to_exactness(false);
-    }
-    // Arrays of known objects become arrays of unknown objects.
-    if (ta->elem()->isa_narrowoop() && ta->elem() != TypeNarrowOop::BOTTOM) {
-      const TypeAry *tary = TypeAry::make(TypeNarrowOop::BOTTOM, ta->size());
-      tj = ta = TypeAryPtr::make(ptr,ta->const_oop(),tary,nullptr,false,offset);
-    }
-    if (ta->elem()->isa_oopptr() && ta->elem() != TypeInstPtr::BOTTOM) {
-      const TypeAry *tary = TypeAry::make(TypeInstPtr::BOTTOM, ta->size());
-      tj = ta = TypeAryPtr::make(ptr,ta->const_oop(),tary,nullptr,false,offset);
-    }
-    // Arrays of bytes and of booleans both use 'bastore' and 'baload' so
-    // cannot be distinguished by bytecode alone.
-    if (ta->elem() == TypeInt::BOOL) {
-      const TypeAry *tary = TypeAry::make(TypeInt::BYTE, ta->size());
-      ciKlass* aklass = ciTypeArrayKlass::make(T_BYTE);
-      tj = ta = TypeAryPtr::make(ptr,ta->const_oop(),tary,aklass,false,offset);
-    }
-    // During the 2nd round of IterGVN, NotNull castings are removed.
-    // Make sure the Bottom and NotNull variants alias the same.
-    // Also, make sure exact and non-exact variants alias the same.
-    if (ptr == TypePtr::NotNull || ta->klass_is_exact() || ta->speculative() != nullptr) {
-      tj = ta = ta->
-              remove_speculative()->
-              cast_to_ptr_type(TypePtr::BotPTR)->
-              cast_to_exactness(false)->
-              with_offset(offset);
-    }
-  }
-
-  // Oop pointers need some flattening
-  const TypeInstPtr *to = tj->isa_instptr();
-  if (to && to != TypeOopPtr::BOTTOM) {
-    ciInstanceKlass* ik = to->instance_klass();
-    if( ptr == TypePtr::Constant ) {
-      if (ik != ciEnv::current()->Class_klass() ||
-          offset < ik->layout_helper_size_in_bytes()) {
-        // No constant oop pointers (such as Strings); they alias with
-        // unknown strings.
-        assert(!is_known_inst, "not scalarizable allocation");
-        tj = to = to->
-                cast_to_instance_id(TypeOopPtr::InstanceBot)->
-                remove_speculative()->
-                cast_to_ptr_type(TypePtr::BotPTR)->
-                cast_to_exactness(false);
-      }
-    } else if( is_known_inst ) {
-      tj = to; // Keep NotNull and klass_is_exact for instance type
-    } else if( ptr == TypePtr::NotNull || to->klass_is_exact() ) {
-      // During the 2nd round of IterGVN, NotNull castings are removed.
-      // Make sure the Bottom and NotNull variants alias the same.
-      // Also, make sure exact and non-exact variants alias the same.
-      tj = to = to->
-              remove_speculative()->
-              cast_to_instance_id(TypeOopPtr::InstanceBot)->
-              cast_to_ptr_type(TypePtr::BotPTR)->
-              cast_to_exactness(false);
-    }
-    if (to->speculative() != nullptr) {
-      tj = to = to->remove_speculative();
-    }
-    // Canonicalize the holder of this field
-    if (offset >= 0 && offset < instanceOopDesc::base_offset_in_bytes()) {
-      // First handle header references such as a LoadKlassNode, even if the
-      // object's klass is unloaded at compile time (4965979).
-      if (!is_known_inst) { // Do it only for non-instance types
-        tj = to = TypeInstPtr::make(TypePtr::BotPTR, env()->Object_klass(), false, nullptr, offset);
-      }
-    } else if (offset < 0 || offset >= ik->layout_helper_size_in_bytes()) {
-      // Static fields are in the space above the normal instance
-      // fields in the java.lang.Class instance.
-      if (ik != ciEnv::current()->Class_klass()) {
-        to = nullptr;
-        tj = TypeOopPtr::BOTTOM;
-        offset = tj->offset();
+  const TypeOopPtr* to = tj->isa_oopptr();
+  if (to != nullptr) {
+    if (offset == oopDesc::mark_offset_in_bytes()) {
+      tj = TypeInstPtr::MARK;
+    } else if (offset == oopDesc::klass_offset_in_bytes()) {
+      tj = TypeInstPtr::KLASS;
+    } else if (to->isa_aryptr() && offset == arrayOopDesc::length_offset_in_bytes()) {
+      tj = TypeAryPtr::RANGE;
+    } else if (to->is_known_instance()) {
+      if (to->isa_aryptr()) {
+        tj = to->with_offset(Type::OffsetBot);
       }
     } else {
-      ciInstanceKlass *canonical_holder = ik->get_canonical_holder(offset);
-      assert(offset < canonical_holder->layout_helper_size_in_bytes(), "");
-      assert(tj->offset() == offset, "no change to offset expected");
-      bool xk = to->klass_is_exact();
-      int instance_id = to->instance_id();
-
-      // If the input type's class is the holder: if exact, the type only includes interfaces implemented by the holder
-      // but if not exact, it may include extra interfaces: build new type from the holder class to make sure only
-      // its interfaces are included.
-      if (xk && ik->equals(canonical_holder)) {
-        assert(tj == TypeInstPtr::make(to->ptr(), canonical_holder, is_known_inst, nullptr, offset, instance_id), "exact type should be canonical type");
-      } else {
-        assert(xk || !is_known_inst, "Known instance should be exact type");
-        tj = to = TypeInstPtr::make(to->ptr(), canonical_holder, is_known_inst, nullptr, offset, instance_id);
-      }
+      tj = _alias.flatten_alias_type(this, to);
     }
   }
 
@@ -1545,19 +1407,17 @@ const TypePtr *Compile::flatten_alias_type( const TypePtr *tj ) const {
     tj = TypeRawPtr::BOTTOM;
 
   if (tj->base() == Type::AnyPtr)
-    tj = TypePtr::BOTTOM;      // An error, which the caller must check for.
+    tj = TypePtr::BOTTOM;
 
   offset = tj->offset();
-  assert( offset != Type::OffsetTop, "Offset has fallen from constant" );
+  assert(offset != Type::OffsetTop, "Offset has fallen from constant");
 
-  assert( (offset != Type::OffsetBot && tj->base() != Type::AryPtr) ||
-          (offset == Type::OffsetBot && tj->base() == Type::AryPtr) ||
-          (offset == Type::OffsetBot && tj == TypeOopPtr::BOTTOM) ||
-          (offset == Type::OffsetBot && tj == TypePtr::BOTTOM) ||
-          (offset == oopDesc::mark_offset_in_bytes() && tj->base() == Type::AryPtr) ||
-          (offset == oopDesc::klass_offset_in_bytes() && tj->base() == Type::AryPtr) ||
-          (offset == arrayOopDesc::length_offset_in_bytes() && tj->base() == Type::AryPtr),
-          "For oops, klasses, raw offset must be constant; for arrays the offset is never known" );
+  if (tj->base() == Type::AryPtr) {
+    assert(offset == oopDesc::mark_offset_in_bytes() || offset == oopDesc::klass_offset_in_bytes() ||
+           offset == arrayOopDesc::length_offset_in_bytes() || offset == Type::OffsetBot, "for arrays, offset is never known");
+  } else if (tj->base() != Type::InstPtr) {
+    assert(tj == TypeOopPtr::BOTTOM || tj == TypePtr::BOTTOM || offset != Type::OffsetBot, "offset must be known");
+  }
   assert( tj->ptr() != TypePtr::TopPTR &&
           tj->ptr() != TypePtr::AnyNull &&
           tj->ptr() != TypePtr::Null, "No imprecise addresses" );
@@ -1568,10 +1428,10 @@ const TypePtr *Compile::flatten_alias_type( const TypePtr *tj ) const {
   return tj;
 }
 
-void Compile::AliasType::Init(int i, const TypePtr* at) {
-  assert(AliasIdxTop <= i && i < Compile::current()->_max_alias_types, "Invalid alias index");
+void Compile::AliasType::Init(int i, const TypePtr* at, int size) {
   _index = i;
   _adr_type = at;
+  _size = size;
   _field = nullptr;
   _element = nullptr;
   _is_rewritable = true; // default
@@ -1637,6 +1497,13 @@ Compile::AliasCacheEntry* Compile::probe_alias_cache(const TypePtr* adr_type) {
   return &_alias_cache[key & right_n_bits(logAliasCacheSize)];
 }
 
+void Compile::clear_alias_cache() {
+  for (uint i = 0; i < AliasCacheSize; i++) {
+    AliasCacheEntry& ace = _alias_cache[i];
+    ace._adr_type = nullptr;
+    ace._index = (i != 0) ? 0 : AliasIdxTop; // Make sure the nullptr adr_type resolves to AliasIdxTop
+  }
+}
 
 //-----------------------------grow_alias_types--------------------------------
 void Compile::grow_alias_types() {
@@ -1676,14 +1543,6 @@ Compile::AliasType* Compile::find_alias_type(const TypePtr* adr_type, bool no_cr
            Type::str(adr_type), Type::str(flat), Type::str(flatten_alias_type(flat)));
     assert(flat != TypePtr::BOTTOM, "cannot alias-analyze an untyped ptr: adr_type = %s",
            Type::str(adr_type));
-    if (flat->isa_oopptr() && !flat->isa_klassptr()) {
-      const TypeOopPtr* foop = flat->is_oopptr();
-      // Scalarizable allocations have exact klass always.
-      bool exact = !foop->klass_is_exact() || foop->is_known_instance();
-      const TypePtr* xoop = foop->cast_to_exactness(exact)->is_ptr();
-      assert(foop == flatten_alias_type(xoop), "exactness must not affect alias type: foop = %s; xoop = %s",
-             Type::str(foop), Type::str(xoop));
-    }
   }
 #endif
 
@@ -1696,19 +1555,22 @@ Compile::AliasType* Compile::find_alias_type(const TypePtr* adr_type, bool no_cr
   }
 
   if (idx == AliasIdxTop) {
-    if (no_create)  return nullptr;
-    // Grow the array if necessary.
-    if (_num_alias_types == _max_alias_types)  grow_alias_types();
-    // Add a new alias type.
-    idx = _num_alias_types++;
-    _alias_types[idx]->Init(idx, flat);
-    if (flat == TypeInstPtr::KLASS)  alias_type(idx)->set_rewritable(false);
-    if (flat == TypeAryPtr::RANGE)   alias_type(idx)->set_rewritable(false);
-    if (flat->isa_instptr()) {
-      if (flat->offset() == java_lang_Class::klass_offset()
-          && flat->is_instptr()->instance_klass() == env()->Class_klass())
-        alias_type(idx)->set_rewritable(false);
+    if (no_create) {
+      return nullptr;
     }
+
+    AliasType alias_class;
+    idx = num_alias_types();
+    alias_class.Init(idx, flat, 0);
+    if (flat == TypeInstPtr::KLASS || flat == TypeAryPtr::RANGE) {
+      alias_class.set_rewritable(false);
+    }
+
+    if (flat->isa_instptr() && flat->offset() == java_lang_Class::klass_offset() &&
+        flat->is_instptr()->instance_klass() == env()->Class_klass()) {
+      alias_class.set_rewritable(false);
+    }
+
     if (flat->isa_aryptr()) {
 #ifdef ASSERT
       const int header_size_min  = arrayOopDesc::base_offset_in_bytes(T_BYTE);
@@ -1716,24 +1578,21 @@ Compile::AliasType* Compile::find_alias_type(const TypePtr* adr_type, bool no_cr
       assert(flat->offset() < header_size_min, "array body reference must be OffsetBot");
 #endif
       if (flat->offset() == TypePtr::OffsetBot) {
-        alias_type(idx)->set_element(flat->is_aryptr()->elem());
+        alias_class.set_element(flat->is_aryptr()->elem());
       }
     }
+
     if (flat->isa_klassptr()) {
-      if (UseCompactObjectHeaders) {
-        if (flat->offset() == in_bytes(Klass::prototype_header_offset()))
-          alias_type(idx)->set_rewritable(false);
+      if (UseCompactObjectHeaders && flat->offset() == in_bytes(Klass::prototype_header_offset())) {
+        alias_class.set_rewritable(false);
       }
-      if (flat->offset() == in_bytes(Klass::super_check_offset_offset()))
-        alias_type(idx)->set_rewritable(false);
-      if (flat->offset() == in_bytes(Klass::access_flags_offset()))
-        alias_type(idx)->set_rewritable(false);
-      if (flat->offset() == in_bytes(Klass::misc_flags_offset()))
-        alias_type(idx)->set_rewritable(false);
-      if (flat->offset() == in_bytes(Klass::java_mirror_offset()))
-        alias_type(idx)->set_rewritable(false);
-      if (flat->offset() == in_bytes(Klass::secondary_super_cache_offset()))
-        alias_type(idx)->set_rewritable(false);
+      if (flat->offset() == in_bytes(Klass::super_check_offset_offset()) ||
+          flat->offset() == in_bytes(Klass::access_flags_offset()) ||
+          flat->offset() == in_bytes(Klass::misc_flags_offset()) ||
+          flat->offset() == in_bytes(Klass::java_mirror_offset()) ||
+          flat->offset() == in_bytes(Klass::secondary_super_cache_offset())) {
+        alias_class.set_rewritable(false);
+      }
     }
     // %%% (We would like to finalize JavaThread::threadObj_offset(),
     // but the base pointer type is not distinctive enough to identify
@@ -1741,7 +1600,7 @@ Compile::AliasType* Compile::find_alias_type(const TypePtr* adr_type, bool no_cr
 
     // Check for final fields.
     const TypeInstPtr* tinst = flat->isa_instptr();
-    if (tinst && tinst->offset() >= instanceOopDesc::base_offset_in_bytes()) {
+    if (tinst != nullptr && tinst->offset() >= instanceOopDesc::base_offset_in_bytes()) {
       ciField* field;
       if (tinst->const_oop() != nullptr &&
           tinst->instance_klass() == ciEnv::current()->Class_klass() &&
@@ -1759,8 +1618,12 @@ Compile::AliasType* Compile::find_alias_type(const TypePtr* adr_type, bool no_cr
               field->offset_in_bytes() == original_field->offset_in_bytes() &&
               field->is_static() == original_field->is_static()), "wrong field?");
       // Set field() and is_rewritable() attributes.
-      if (field != nullptr)  alias_type(idx)->set_field(field);
+      if (field != nullptr) {
+        alias_class.set_field(field);
+      }
     }
+
+    add_alias_type(alias_class);
   }
 
   // Fill the cache for next time.
@@ -1779,18 +1642,14 @@ Compile::AliasType* Compile::find_alias_type(const TypePtr* adr_type, bool no_cr
   return alias_type(idx);
 }
 
-
-Compile::AliasType* Compile::alias_type(ciField* field) {
-  const TypeOopPtr* t;
-  if (field->is_static())
-    t = TypeInstPtr::make(field->holder()->java_mirror());
-  else
-    t = TypeOopPtr::make_from_klass_raw(field->holder());
-  AliasType* atp = alias_type(t->add_offset(field->offset_in_bytes()), field);
-  assert((field->is_final() || field->is_stable()) == !atp->is_rewritable(), "must get the rewritable bits correct");
-  return atp;
+void Compile::add_alias_type(const AliasType& new_alias) {
+  if (_num_alias_types == _max_alias_types) {
+    grow_alias_types();
+  }
+  int idx = _num_alias_types++;
+  assert(idx == new_alias.index(), "must be the same %d, %d", idx, new_alias.index());
+  *_alias_types[idx] = new_alias;
 }
-
 
 //------------------------------have_alias_type--------------------------------
 bool Compile::have_alias_type(const TypePtr* adr_type) {
@@ -2398,9 +2257,17 @@ void Compile::Optimize() {
 
   if (failing())  return;
 
-  if (has_loops()) {
-    print_method(PHASE_BEFORE_LOOP_OPTS, 2);
+  // Divide the memory into independent slices for better memory analysis
+  print_method(PHASE_BEFORE_ALIAS_ANALYSIS, 2);
+  {
+    TracePhase tp(_t_aliasAnalysis);
+    PhaseAliasAnalysis alias_analysis(_alias, igvn);
+    alias_analysis.optimize();
+    if (failing()) {
+      return;
+    }
   }
+  print_method(PHASE_AFTER_ALIAS_ANALYSIS, 2);
 
   // Perform escape analysis
   if (do_escape_analysis() && ConnectionGraph::has_candidates(this)) {

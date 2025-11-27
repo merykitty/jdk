@@ -1344,7 +1344,7 @@ void PhaseStringOpts::getChars(GraphKit& kit, Node* arg, Node* dst_array, BasicT
   Node* charPos = new PhiNode(head, TypeInt::INT);
   charPos->init_req(1, end);
   kit.gvn().set_type(charPos, TypeInt::INT);
-  Node* mem = PhiNode::make(head, kit.memory(byte_adr_idx), Type::MEMORY, TypeAryPtr::BYTES);
+  Node* mem = PhiNode::make(head, kit.memory(byte_adr_idx), Type::MEMORY, C->get_adr_type(byte_adr_idx));
   kit.gvn().set_type(mem, Type::MEMORY);
 
   kit.set_control(head);
@@ -1416,7 +1416,7 @@ Node* PhaseStringOpts::int_getChars(GraphKit& kit, Node* arg, Node* dst_array, N
   RegionNode* final_merge = new RegionNode(dcon ? 4 : 6);
   kit.gvn().set_type(final_merge, Type::CONTROL);
 
-  Node* final_mem = PhiNode::make(final_merge, kit.memory(byte_adr_idx), Type::MEMORY, TypeAryPtr::BYTES);
+  Node* final_mem = PhiNode::make(final_merge, kit.memory(byte_adr_idx), Type::MEMORY, C->get_adr_type(byte_adr_idx));
   kit.gvn().set_type(final_mem, Type::MEMORY);
 
   // need to handle arg == Integer.MIN_VALUE specially because negating doesn't make it positive
