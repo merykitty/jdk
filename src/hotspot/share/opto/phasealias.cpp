@@ -44,6 +44,8 @@
 
 #include <cstring>
 
+constexpr bool VerifyAliasAnalysis = true;
+
 // Do not try to add a slice which seems too large, it is better to drop them to TypeOopPtr::BOTTOM
 // instead. This will make that particular access less optimized but avoid degrade other accesses
 // that may alias if this absorbs them.
@@ -140,6 +142,10 @@ PhaseAliasAnalysis::PhaseAliasAnalysis(AliasAnalyzer& analyzer, PhaseIterGVN& ig
     _old_alias_limit(C->num_alias_types()), _memory_slices(nullptr), _old_nodes(nullptr), _merge_mems(nullptr), _old_phis_narrow_projs(nullptr) {}
 
 void PhaseAliasAnalysis::optimize() {
+  if (VerifyAliasAnalysis) {
+    verify_graph();
+  }
+
   if (_old_oop_alias_idx == -1) {
     // No heap access
     return;
@@ -149,7 +155,7 @@ void PhaseAliasAnalysis::optimize() {
     ResourceMark rm;
     GrowableArray<AliasAnalyzer::MemorySlice> memory_slices;
     Unique_Node_List old_nodes;
-    GrowableArray<MergeMemNode*> merge_mems;
+    Unique_Node_List merge_mems;
     Unique_Node_List old_phis_narrow_projs;
     _memory_slices = &memory_slices;
     _old_nodes = &old_nodes;
@@ -170,6 +176,10 @@ void PhaseAliasAnalysis::optimize() {
   }
 
   _igvn.optimize();
+
+  if (VerifyAliasAnalysis) {
+    verify_graph();
+  }
 }
 
 // Visit the whole graph, find all heap accesses, and divide them into slices
@@ -512,17 +522,33 @@ void PhaseAliasAnalysis::split_memory_nodes(SplitMemoryGraphData& data) {
 // Follow the memory graph and record the new memory input for each node, this also fixes the
 // inputs of MergeMemNodes and adds inputs to the Phis created in split_memory_nodes
 void PhaseAliasAnalysis::record_memory_edges(SplitMemoryGraphData& data) {
+  int verify_inputs_size = VerifyAliasAnalysis ? C->num_alias_types() : 0;
+  GrowableArray<Node*> verify_inputs(verify_inputs_size, verify_inputs_size, nullptr);
+
   // First, start from the MergeMemNodes, record the new memory inputs from uses to defs
-  for (int i = 0; i < _merge_mems->length(); i++) {
-    MergeMemNode* mm = _merge_mems->at(i);
+  for (uint i = 0; i < _merge_mems->size(); i++) {
+    MergeMemNode* mm = _merge_mems->at(i)->as_MergeMem();
     Node* input = mm->memory_at(_old_oop_alias_idx);
     assert(input != mm->base_memory(), "should not process this node");
+
+    if (false) {
+      for (int alias_idx = _old_alias_limit; alias_idx < C->num_alias_types(); i++) {
+        verify_inputs.at(alias_idx) = find_new_memory_input(data, mm->memory_at(_old_oop_alias_idx), alias_idx);
+      }
+    }
+
     _igvn.rehash_node_delayed(mm);
     auto merge_mem_fix = [&](int alias_idx, Node* alias_state) {
       mm->set_memory_at(alias_idx, alias_state);
     };
     record_memory_edges_from_states(merge_mem_fix, data, input);
     mm->set_req_X(_old_oop_alias_idx, C->top(), &_igvn);
+
+    if (false) {
+      for (int alias_idx = _old_alias_limit; alias_idx < C->num_alias_types(); alias_idx++) {
+        assert(mm->memory_at(alias_idx) == verify_inputs.at(alias_idx), "must match");
+      }
+    }
   }
 
   // Next, start from each of the inputs of Phis
@@ -535,74 +561,66 @@ void PhaseAliasAnalysis::record_memory_edges(SplitMemoryGraphData& data) {
     Node** split_phis = data.split_mem_nodes.at(n->_idx);
     assert(split_phis != nullptr, "must have been split");
     for (uint in_idx = 1; in_idx < n->req(); in_idx++) {
+      if (false) {
+        for (int alias_idx = _old_alias_limit; alias_idx < C->num_alias_types(); alias_idx++) {
+          verify_inputs.at(alias_idx) = find_new_memory_input(data, n->in(in_idx), alias_idx);
+        }
+      }
+
       auto phi_fix = [&](int alias_idx, Node* alias_state) {
         Node* split_phi = split_phis[alias_idx];
         assert(split_phi != nullptr, "must have been assigned");
         split_phi->init_req(in_idx, alias_state);
       };
       record_memory_edges_from_states(phi_fix, data, n->in(in_idx));
+
+      if (false) {
+        for (int alias_idx = _old_alias_limit; alias_idx < C->num_alias_types(); alias_idx++) {
+          assert(split_phis[alias_idx]->in(in_idx) == verify_inputs.at(alias_idx), "must match");
+        }
+      }
     }
   }
 
-  // There might be nodes corresponding to _old_oop_alias_idx that has not been visited, this is
-  // because we may have shapes like: mem -> GetAndAddI -> SCMemProj with SCMemProj being a
-  // TypePtr::BOTTOM. In those cases, we have not visited the memory input of GetAndAddI yet. It is
-  // rare, so traverse the whole graph to find all nodes that consume _old_oop_alias_idx and fix
-  // them.
+  if (!VerifyAliasAnalysis) {
+    return;
+  }
+
+  // Verify the correctness of the algorithm using another approach. Traverse the whole graph to
+  // find all nodes that consume _old_oop_alias_idx, then walk back along their memory input to
+  // find the new memory input, verify that the 2 approaches give the same results.
   for (uint i = 0; i < _old_nodes->size(); i++) {
     Node* n = _old_nodes->at(i);
     if (n->is_Proj()) {
-      continue;
-    }
-
-    if (int(n->_idx) < data.memory_inputs.length() && data.memory_inputs.at(n->_idx) != nullptr) {
+      assert(int(n->_idx) >= data.memory_inputs.length() || data.memory_inputs.at(n->_idx) == nullptr, "cannot change the input of a Proj");
       continue;
     }
 
     if (_old_phis_narrow_projs->member(n)) {
+      assert(int(n->_idx) >= data.memory_inputs.length() || data.memory_inputs.at(n->_idx) == nullptr, "these nodes are killed");
       continue;
     }
 
     int alias_idx = C->get_alias_index(get_adr_type(n));
     if (alias_idx < _old_alias_limit) {
+      assert(int(n->_idx) >= data.memory_inputs.length() || data.memory_inputs.at(n->_idx) == nullptr, "cannot change the memory of a non-oop access");
       continue;
     }
 
     // Walk back the memory graph to find a suitable input
-    Node* in = n;
-    while (true) {
-      in = in->in(memory_input_idx(in));
-
-      // The new input can be one we split in split_memory_nodes
-      if (_old_phis_narrow_projs->member(in)) {
-        if (in->is_Phi()) {
-          in = data.split_mem_nodes.at(in->_idx)[alias_idx];
-          break;
-        } else {
-          Node** split_narrow_projs = data.split_mem_nodes.at(in->_idx);
-          assert(split_narrow_projs != nullptr, "must have been split");
-          if (split_narrow_projs[alias_idx] != nullptr) {
-            in = split_narrow_projs[alias_idx];
-            break;
-          } else {
-            continue;
-          }
-        }
-      }
-
-      // Bottom or a matching alias class
-      int in_alias_idx = C->get_alias_index(get_adr_type(in));
-      if (in_alias_idx == Compile::AliasIdxBot || in_alias_idx == alias_idx) {
-        break;
-      }
-    }
-
-    data.memory_inputs.at_grow(n->_idx) = in;
+    Node* old_in = n->in(memory_input_idx(n));
+    Node* new_in = find_new_memory_input(data, old_in, alias_idx);
+    assert(new_in == old_in || data.memory_inputs.at(n->_idx) == new_in, "must match");
   }
 }
 
 // Use memory_inputs to update the edges of other nodes
 void PhaseAliasAnalysis::fix_memory_edges(const SplitMemoryGraphData& data) {
+  // Fast path, no heap write in the compilation unit
+  if (data.memory_inputs.is_empty()) {
+    return;
+  }
+
   for (uint i = 0; i < _old_nodes->size(); i++) {
     Node* n = _old_nodes->at(i);
     if (int(n->_idx) >= data.memory_inputs.length()) {
@@ -620,12 +638,13 @@ void PhaseAliasAnalysis::fix_memory_edges(const SplitMemoryGraphData& data) {
   }
 }
 
+static void do_nothing(int, Node*) {}
+
 // Start from a node with complete states of all alias classes (a MergeMem or a Phi of
 // TypeOopPtr::BOTTOM), walk along the edges corresponding to _old_oop_alias_idx, push the nodes on
-// work_stack on the way until we encounter a TypePtr::BOTTOM or TypeOopPtr::BOTTOM (a Phi). Then,
-// walk backward, along the way, update alias_states, and fill in memory_inputs, the states at
-// start are fixed at the end. Since there can be multiple inputs to start, we pass in the input
-// with which to follow instead.
+// work_stack on the way until we encounter a Phi or a MergeMem. Then, walk backward, along the
+// way, update alias_states, and fill in memory_inputs, the states at start are fixed at the end.
+// Since there can be multiple inputs to start, we pass in the input with which to follow instead.
 // We cannot fix the edges yet because a memory node can be the memory input of multiple nodes, and
 // changing its input will break the graph, prevent later iterations which may encounter the
 // changed node from a different output.
@@ -640,14 +659,34 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
       // Do not try to ask for the alias_index of the old Phis and NarrowMemProjs that were split,
       // they are illegal now.
       if (_old_phis_narrow_projs->member(current)) {
-        // Stop at the TypeOopPtr::BOTTOM Phi but not at NarrowMemProj
+        // Stop at the TypeOopPtr::BOTTOM Phi but not at NarrowMemProj, another invocation will
+        // walk from the Phi
         if (current->is_Phi()) {
           break;
         }
       } else {
+        // For some reasons, Raw can act like Bot. As Raw should normally not be an input of Oop,
+        // this Raw must have been used as a Bot here.
         int current_alias_idx = C->get_alias_index(get_adr_type(current));
-        if (current_alias_idx == Compile::AliasIdxBot) {
-          break;
+        if (current_alias_idx <= Compile::AliasIdxRaw) {
+          // Stop at Parm, there is nothing before it
+          if (current->is_Parm()) {
+            break;
+          }
+
+          // We do not know how to walk pass Phis and MergeMems
+          if (current->is_Phi() || current->is_MergeMem()) {
+            break;
+          }
+
+          // There may be nodes behind a BotPTR without a MergeMem, for example
+          // mem(oop) -> GetAndAddI(oop) -> SCMemProj(Bot). We need to walk past the Bot memory to
+          // reach those nodes. But since the Bot memory resets alias_states, we don't need to walk
+          // beyond it to know what the alias_states of the memory we have walked past. As a
+          // result, if another invocation has visited those nodes, we can stop now.
+          if (data.visited.test_set(current->_idx)) {
+            break;
+          }
         }
       }
     }
@@ -671,6 +710,7 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
       data.alias_states.at(i) = split_phi;
     }
   } else {
+    assert(end->bottom_type() == Type::MEMORY && C->get_alias_index(get_adr_type(end)) <= Compile::AliasIdxRaw, "must be a Bot memory");
     for (int i = _old_alias_limit; i < C->num_alias_types(); i++) {
       data.alias_states.at(i) = end;
     }
@@ -680,6 +720,7 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
   // memory_inputs along the way. The stack should contain the nodes from start up to current
   // excluding the 2 bounds. Start right at the node we just stopped, that means the top of the
   // work stack will be the second node we process here.
+  int cur_alias_idx = C->get_alias_index(get_adr_type(current));
   while (true) {
     // Record the new memory inputs of the users of current
     if (current->bottom_type() == Type::MEMORY) {
@@ -692,9 +733,10 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
         }
 
         int out_alias_idx = C->get_alias_index(get_adr_type(out));
-        if (current == end && out_alias_idx < _old_alias_limit) {
-          // Since end is a bottom memory, a lot of nodes can be its outputs, so we keep the assert
-          // out_alias_idx >= _old_alias_limit for the cases where current != end only
+        if (cur_alias_idx <= Compile::AliasIdxRaw && out_alias_idx < _old_alias_limit) {
+          // Since current is a bottom memory, a lot of nodes can be its outputs, so we keep the
+          // assert out_alias_idx >= _old_alias_limit for the cases where current is not a bottom
+          // memory only
           assert(!_old_phis_narrow_projs->member(current), "outputs of these nodes must be fixed");
           continue;
         }
@@ -707,7 +749,9 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
         }
 
         assert(out_alias_idx >= _old_alias_limit, "must be a new alias class");
-        data.memory_inputs.at_grow(out->_idx) = data.alias_states.at(out_alias_idx);
+        Node* new_in = data.alias_states.at(out_alias_idx);
+        assert(new_in != nullptr, "must have a node");
+        data.memory_inputs.at_grow(out->_idx) = new_in;
       }
     }
 
@@ -717,6 +761,7 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
     }
     current = data.work_stack.pop();
     if (current->is_NarrowMemProj()) {
+      // NarrowMemProj sets multiple alias classes
       Node** current_split_nodes = data.split_mem_nodes.at(current->_idx);
       assert(current_split_nodes != nullptr, "must have been split");
       for (int i = _old_alias_limit; i < C->num_alias_types(); i++) {
@@ -724,13 +769,21 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
           data.alias_states.at(i) = current_split_nodes[i];
         }
       }
+      // This value is to decide whether current is a Bot memory only
+      cur_alias_idx = C->num_alias_types();
     } else if (current->bottom_type() == Type::MEMORY) {
       const TypePtr* adr_type = get_adr_type(current);
-      int alias_idx = C->get_alias_index(adr_type);
-      if (alias_idx < _old_alias_limit) {
+      cur_alias_idx = C->get_alias_index(adr_type);
+      if (cur_alias_idx <= Compile::AliasIdxRaw) {
+        // A Bot memory
+        assert(data.visited.test(current->_idx), "must be a Bot memory we walked past");
+        for (int i = _old_alias_limit; i < C->num_alias_types(); i++) {
+          data.alias_states.at(i) = current;
+        }
+      } else if (cur_alias_idx < _old_alias_limit) {
         assert(should_not_try_analyze(adr_type), "must be a new alias class, unless we give up");
       } else {
-        data.alias_states.at(alias_idx) = current;
+        data.alias_states.at(cur_alias_idx) = current;
       }
     }
   }
@@ -738,6 +791,23 @@ void PhaseAliasAnalysis::record_memory_edges_from_states(F fix_states, SplitMemo
   // Fix the inputs of starts
   for (int i = _old_alias_limit; i < C->num_alias_types(); i++) {
     fix_states(i, data.alias_states.at(i));
+  }
+
+  // If we stop because we don't know how to walk past end, we may need to solve it recursively, if
+  // the node is in _old_phis_narrow_projs or _merge_mems, we need to fix its input, so we cannot
+  // do it here
+  if (end->is_Phi() && !_old_phis_narrow_projs->member(end)) {
+    // Walk past a bottom Phi if it has not been visited yet
+    if (!data.visited.test_set(end->_idx)) {
+      for (uint i = 1; i < end->req(); i++) {
+        record_memory_edges_from_states(do_nothing, data, end->in(i));
+      }
+    }
+  } else if (end->is_MergeMem() && !_merge_mems->member(end)) {
+    // A MergeMem that does not need fixing its inputs
+    if (!data.visited.test_set(end->_idx)) {
+      record_memory_edges_from_states(do_nothing, data, end->as_MergeMem()->base_memory());
+    }
   }
 }
 
@@ -929,4 +999,109 @@ PhaseAliasAnalysis::SplitMemoryGraphData::SplitMemoryGraphData(PhaseAliasAnalysi
   : split_mem_nodes(alias_analysis._old_nodes->size()),
     memory_inputs(alias_analysis._old_nodes->size()),
     alias_states(alias_analysis.C->num_alias_types(), alias_analysis.C->num_alias_types(), nullptr),
-    work_stack() {}
+    work_stack(), visited() {}
+
+void PhaseAliasAnalysis::verify_graph() {
+  // For some reasons, Raw can be used as Bot (e.g. GraphKit::set_output_for_allocation). As a
+  // result, verification should be lenient between Bot and Raw.
+  auto verify_node = [&](Node* n) {
+    int n_alias_idx = C->get_alias_index(get_adr_type(n));
+    if (n->is_Parm()) {
+      // This is the start, there is no input to examine
+      assert(n->bottom_type() != Type::MEMORY || n_alias_idx == Compile::AliasIdxBot, "Parm must be Bot %d", n_alias_idx);
+      return;
+    }
+    if (n_alias_idx == Compile::AliasIdxTop) {
+      return;
+    }
+
+    if (n->is_Phi()) {
+      if (n->bottom_type() == Type::MEMORY) {
+        for (uint i = 1; i < n->req(); i++) {
+          int in_alias_idx = C->get_alias_index(get_adr_type(n->in(i)));
+          assert(n_alias_idx == in_alias_idx || in_alias_idx <= Compile::AliasIdxRaw, "inputs of a Phi must match %d, %d", n_alias_idx, in_alias_idx);
+        }
+      }
+      return;
+    } else if (n->is_MergeMem()) {
+      assert(get_adr_type(n) == TypePtr::BOTTOM, "must merge all memory");
+      Node* base = n->as_MergeMem()->base_memory();
+      int base_alias_idx = C->get_alias_index(get_adr_type(base));
+      assert(base_alias_idx <= Compile::AliasIdxRaw, "base must be Bot or Raw %d", base_alias_idx);
+      for (int i = Compile::AliasIdxRaw; i < C->num_alias_types(); i++) {
+        Node* in = n->as_MergeMem()->memory_at(i);
+        int in_alias_idx = C->get_alias_index(get_adr_type(in));
+        assert(in_alias_idx == i || in_alias_idx <= Compile::AliasIdxRaw,
+               "inputs of a MergeMem must match %d, %d", i, in_alias_idx);
+      }
+      return;
+    }
+
+    if (n->req() <= memory_input_idx(n)) {
+      return;
+    }
+
+    Node* in = n->in(memory_input_idx(n));
+    const TypePtr* in_adr_type = get_adr_type(in);
+    int in_alias_idx = C->get_alias_index(in_adr_type);
+    if (n_alias_idx <= Compile::AliasIdxRaw) {
+      assert(in_alias_idx <= Compile::AliasIdxRaw || n->Opcode() == Op_SCMemProj ||
+             (n->is_MemBar() && should_not_try_analyze(in_adr_type)),
+             "unexpected case when a non-bottom is the input of a bottom %s, %s, %d", n->Name(), in->Name(), in_alias_idx);
+    } else {
+      assert(in_alias_idx <= Compile::AliasIdxRaw || in_alias_idx == n_alias_idx, "input of a memory consumer must match %d, %d", n_alias_idx, in_alias_idx);
+    }
+  };
+
+  ResourceMark rm;
+  Unique_Node_List wq;
+  wq.push(C->root());
+  for (uint i = 0; i < wq.size(); i++) {
+    Node* n = wq.at(i);
+    verify_node(n);
+    for (uint j = 0; j < n->req(); j++) {
+      Node* in = n->in(j);
+      if (in != nullptr) {
+        wq.push(in);
+      }
+    }
+  }
+}
+
+Node* PhaseAliasAnalysis::find_new_memory_input(const SplitMemoryGraphData& data, Node* in, int alias_idx) {
+  // Walk back the memory graph to find a suitable input
+  Node* new_in = in;
+  for (;; new_in = new_in->in(memory_input_idx(new_in))) {
+    // The new input can be one we split in split_memory_nodes
+    if (_old_phis_narrow_projs->member(new_in)) {
+      if (new_in->is_Phi()) {
+        Node** split_phis = data.split_mem_nodes.at(new_in->_idx);
+        assert(split_phis != nullptr, "must have been split");
+        new_in = split_phis[alias_idx];
+        break;
+      } else {
+        Node** split_narrow_projs = data.split_mem_nodes.at(new_in->_idx);
+        assert(split_narrow_projs != nullptr, "must have been split");
+        Node* split_proj = split_narrow_projs[alias_idx];
+        if (split_proj != nullptr) {
+          new_in = split_proj;
+          break;
+        } else {
+          continue;
+        }
+      }
+    }
+
+    // Bot or a matching alias class. For some reasons, Raw can act as a Bot. As normally Raw
+    // should not be an input of Oop, this Raw is a Bot, so stop at Raw, too.
+    if (new_in->bottom_type() == Type::MEMORY) {
+      int in_alias_idx = C->get_alias_index(get_adr_type(new_in));
+      if (in_alias_idx <= Compile::AliasIdxRaw || in_alias_idx == alias_idx) {
+        break;
+      }
+    }
+  }
+
+  assert(new_in != nullptr, "must find an input");
+  return new_in;
+}

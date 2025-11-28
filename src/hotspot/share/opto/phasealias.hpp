@@ -25,6 +25,7 @@
 #ifndef SHARE_OPTO_PHASEALIAS_HPP
 #define SHARE_OPTO_PHASEALIAS_HPP
 
+#include "libadt/vectset.hpp"
 #include "opto/phase.hpp"
 #include "utilities/growableArray.hpp"
 
@@ -90,7 +91,7 @@ private:
   // If a MergeMem has memory at _old_oop_alias_idx different from the base memory, we need to find
   // the correct memory for each of the newly created alias classes and connect them to the
   // MergeMem during this phase
-  GrowableArray<MergeMemNode*>* _merge_mems;
+  Unique_Node_List* _merge_mems;
 
   // Before alias analysis, a Phi and NarrowMemProj represents the state of the whole heap, we need
   // to split them so that 1 Phi or NarrowMemProj represents only 1 alias class
@@ -125,6 +126,7 @@ private:
     // Data structures shared between iterations
     GrowableArray<Node*> alias_states;
     GrowableArray<Node*> work_stack;
+    VectorSet visited;
 
     SplitMemoryGraphData(PhaseAliasAnalysis& alias_analysis);
   };
@@ -152,6 +154,9 @@ private:
   void for_each_narrow_mem_proj_slice(F f, NarrowMemProjNode* node);
 
   ciKlass* narrow_mem_alloc_klass(NarrowMemProjNode* node, bool& is_exact);
+
+  void verify_graph();
+  Node* find_new_memory_input(const SplitMemoryGraphData& data, Node* in, int alias_idx);
 };
 
 #endif // SHARE_OPTO_PHASEALIAS_HPP
