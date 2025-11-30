@@ -1690,10 +1690,12 @@ void SafePointScalarMergeNode::dump_spec(outputStream *st) const {
 //=============================================================================
 uint AllocateNode::size_of() const { return sizeof(*this); }
 
+// The entire memory state is needed for slow path of the allocation since GC and deoptimization
+// can happened, so in_adr_type = TypePtr::BOTTOM
 AllocateNode::AllocateNode(Compile* C, const TypeFunc *atype,
                            Node *ctrl, Node *mem, Node *abio,
                            Node *size, Node *klass_node, Node *initial_test)
-  : CallNode(atype, nullptr, TypeRawPtr::BOTTOM)
+  : CallNode(atype, nullptr, TypeRawPtr::BOTTOM, TypePtr::BOTTOM)
 {
   init_class_id(Class_Allocate);
   init_flags(Flag_is_macro);

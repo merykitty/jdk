@@ -603,7 +603,7 @@ void PhaseIdealLoop::add_parse_predicate(Deoptimization::DeoptReason reason, Nod
     address call_addr = OptoRuntime::uncommon_trap_blob()->entry_point();
     const TypePtr* no_memory_effects = nullptr;
     CallNode* unc = new CallStaticJavaNode(OptoRuntime::uncommon_trap_Type(), call_addr, "uncommon_trap",
-                                           no_memory_effects);
+                                           no_memory_effects, sfpt->is_Call() ? sfpt->out_adr_type() : sfpt->in_adr_type());
 
     Node* mem = nullptr;
     Node* i_o = nullptr;
@@ -6516,7 +6516,7 @@ Node* PhaseIdealLoop::get_late_ctrl_with_anti_dep(LoadNode* n, Node* early, Node
         Node* sctrl = has_ctrl(s) ? get_ctrl(s) : s->in(0);
         assert(sctrl != nullptr || !s->is_reachable_from_root(), "must have control");
         if (sctrl != nullptr && !sctrl->is_top() && is_dominator(early, sctrl)) {
-          const TypePtr* adr_type = s->adr_type();
+          const TypePtr* adr_type = s->out_adr_type();
           if (s->is_ArrayCopy()) {
             // Copy to known instance needs destination type to test for aliasing
             const TypePtr* dest_type = s->as_ArrayCopy()->_dest_type;
@@ -6546,7 +6546,7 @@ Node* PhaseIdealLoop::get_late_ctrl_with_anti_dep(LoadNode* n, Node* early, Node
     if (LCA != early) {
       for (uint i = 0; i < worklist.size(); i++) {
         Node* s = worklist.at(i);
-        if (s->is_Phi() && C->can_alias(s->adr_type(), load_alias_idx)) {
+        if (s->is_Phi() && C->can_alias(s->out_adr_type(), load_alias_idx)) {
           Node* r = s->in(0);
           for (uint j = 1; j < s->req(); j++) {
             Node* in = s->in(j);
