@@ -27,6 +27,7 @@
 #define SHARE_OPTO_NODE_HPP
 
 #include "libadt/vectset.hpp"
+#include "opto/c2_globals.hpp"
 #include "opto/compile.hpp"
 #include "opto/type.hpp"
 #include "utilities/copy.hpp"
@@ -1653,8 +1654,8 @@ protected:
   void grow(uint i);
 
 public:
-  Node_Array(Arena* a, uint max = OptoNodeListSize) : _a(a), _max(max) {
-    _nodes = NEW_ARENA_ARRAY(a, Node*, max);
+  Node_Array(Arena* a, uint max = 0) : _a(a), _max(max) {
+    _nodes = max == 0 ? nullptr : NEW_ARENA_ARRAY(a, Node*, max);
     clear();
   }
   Node_Array() : Node_Array(Thread::current()->resource_area()) {}
@@ -1684,8 +1685,8 @@ public:
 class Node_List : public Node_Array {
   uint _cnt;
 public:
-  Node_List(uint max = OptoNodeListSize) : Node_Array(Thread::current()->resource_area(), max), _cnt(0) {}
-  Node_List(Arena *a, uint max = OptoNodeListSize) : Node_Array(a, max), _cnt(0) {}
+  Node_List(uint max = 0) : Node_Array(Thread::current()->resource_area(), max), _cnt(0) {}
+  Node_List(Arena *a, uint max = 0) : Node_Array(a, max), _cnt(0) {}
 
   NONCOPYABLE(Node_List);
   Node_List& operator=(Node_List&&) = delete;

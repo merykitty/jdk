@@ -29,6 +29,7 @@
 #include "memory/allocation.inline.hpp"
 #include "memory/resourceArea.hpp"
 #include "opto/ad.hpp"
+#include "opto/c2_globals.hpp"
 #include "opto/callGenerator.hpp"
 #include "opto/castnode.hpp"
 #include "opto/cfgnode.hpp"
@@ -2817,11 +2818,18 @@ const RegMask &Node::in_RegMask(uint) const {
 
 void Node_Array::grow(uint i) {
   assert(i >= _max, "Should have been checked before, use maybe_grow?");
-  assert(_max > 0, "invariant");
   uint old = _max;
-  _max = next_power_of_2(i);
-  _nodes = (Node**)_a->Arealloc( _nodes, old*sizeof(Node*),_max*sizeof(Node*));
-  Copy::zero_to_bytes( &_nodes[old], (_max-old)*sizeof(Node*) );
+  if (old == 0) {
+    assert(_nodes == nullptr, "invariant");
+    _max = OptoNodeListSize;
+    _nodes = (Node**)_a->Amalloc(_max * sizeof(Node*));
+  } {
+    assert(_nodes != nullptr, "invariant");
+    _max = MAX2<uint>(next_power_of_2(i), OptoNodeListSize);
+    _nodes = (Node**)_a->Arealloc(_nodes, old * sizeof(Node*), _max * sizeof(Node*));
+  }
+
+  Copy::zero_to_bytes(&_nodes[old], (_max - old) * sizeof(Node*));
 }
 
 void Node_Array::insert(uint i, Node* n) {
