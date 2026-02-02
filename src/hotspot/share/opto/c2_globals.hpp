@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -667,6 +667,14 @@
                                                                             \
   develop(bool, InlineAccessors, true,                                      \
           "inline accessor methods (get/set)")                              \
+                                                                            \
+  product(bool, InlineTrivialMethods, true, DIAGNOSTIC,                     \
+          "inline a method if inlining simplifies the graph")               \
+                                                                            \
+  product(int, TrivialMethodNodeLimit, 10, DIAGNOSTIC,                      \
+          "the upper bound of the number of nodes inlining a trivial"       \
+          "may produce")                                                    \
+          range(0, 100)                                                     \
                                                                             \
   product(intx, TypeProfileMajorReceiverPercent, 90,                        \
           "% of major receiver type to all profiled receivers")             \

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,8 +31,10 @@
 #include "interpreter/linkResolver.hpp"
 #include "jfr/jfrEvents.hpp"
 #include "oops/objArrayKlass.hpp"
+#include "opto/c2_globals.hpp"
 #include "opto/callGenerator.hpp"
 #include "opto/parse.hpp"
+#include "opto/trivialinlining.hpp"
 #include "runtime/handles.inline.hpp"
 #include "utilities/events.hpp"
 
@@ -113,8 +115,8 @@ static bool is_unboxing_method(ciMethod* callee_method, Compile* C) {
 }
 
 // positive filter: should callee be inlined?
-bool InlineTree::should_inline(ciMethod* callee_method, ciMethod* caller_method,
-                               JVMState* caller_jvms, bool& should_delay, ciCallProfile& profile) {
+bool InlineTree::should_inline(ciMethod* callee_method, ciMethod* caller_method, JVMState* caller_jvms,
+                               bool callee_trivial, bool& should_delay, const ciCallProfile& profile) {
   int caller_bci = caller_jvms->bci();
   // Allows targeted inlining
   if (C->directive()->should_inline(callee_method)) {
@@ -137,6 +139,11 @@ bool InlineTree::should_inline(ciMethod* callee_method, ciMethod* caller_method,
       set_msg("force inline by ciReplay");
     }
     _forced_inline = true;
+    return true;
+  }
+
+  if (callee_trivial) {
+    set_msg("trivial");
     return true;
   }
 
@@ -194,8 +201,8 @@ bool InlineTree::should_inline(ciMethod* callee_method, ciMethod* caller_method,
 
 
 // negative filter: should callee NOT be inlined?
-bool InlineTree::should_not_inline(ciMethod* callee_method, ciMethod* caller_method,
-                                   int caller_bci, bool& should_delay, ciCallProfile& profile) {
+bool InlineTree::should_not_inline(ciMethod* callee_method, ciMethod* caller_method, int caller_bci,
+                                   bool callee_trivial, bool& should_delay, const ciCallProfile& profile) {
   const char* fail_msg = nullptr;
 
   // First check all inlining restrictions which are required for correctness
@@ -266,6 +273,11 @@ bool InlineTree::should_not_inline(ciMethod* callee_method, ciMethod* caller_met
 
   // Now perform checks which are heuristic
 
+  if (callee_trivial) {
+    // Trivial methods
+    return false;
+  }
+
   if (is_unboxing_method(callee_method, C)) {
     // Inline unboxing methods.
     return false;
@@ -327,7 +339,7 @@ bool InlineTree::should_not_inline(ciMethod* callee_method, ciMethod* caller_met
   return false;
 }
 
-bool InlineTree::is_not_reached(ciMethod* callee_method, ciMethod* caller_method, int caller_bci, ciCallProfile& profile) {
+bool InlineTree::is_not_reached(ciMethod* callee_method, ciMethod* caller_method, int caller_bci, const ciCallProfile& profile) {
   if (!UseInterpreter) {
     return false; // -Xcomp
   }
@@ -360,26 +372,26 @@ bool InlineTree::is_not_reached(ciMethod* callee_method, ciMethod* caller_method
 // return true if ok
 // Relocated from "InliningClosure::try_to_inline"
 bool InlineTree::try_to_inline(ciMethod* callee_method, ciMethod* caller_method,
-                               int caller_bci, JVMState* jvms, ciCallProfile& profile,
-                               bool& should_delay) {
+                               int caller_bci, JVMState* jvms, bool callee_trivial,
+                               const ciCallProfile& profile, bool& should_delay) {
 
   if (ClipInlining && (int)count_inline_bcs() >= DesiredMethodLimit) {
-    if (!callee_method->force_inline() || !IncrementalInline) {
+    if (IncrementalInline && (callee_trivial || callee_method->force_inline())) {
+      should_delay = !C->inlining_incrementally();
+    } else {
       set_msg("size > DesiredMethodLimit");
       return false;
-    } else if (!C->inlining_incrementally()) {
-      should_delay = true;
     }
   }
 
   _forced_inline = false; // Reset
 
   // 'should_delay' can be overridden during replay compilation
-  if (!should_inline(callee_method, caller_method, jvms, should_delay, profile)) {
+  if (!should_inline(callee_method, caller_method, jvms, callee_trivial, should_delay, profile)) {
     return false;
   }
   // 'should_delay' can be overridden during replay compilation
-  if (should_not_inline(callee_method, caller_method, caller_bci, should_delay, profile)) {
+  if (should_not_inline(callee_method, caller_method, caller_bci, callee_trivial, should_delay, profile)) {
     return false;
   }
 
@@ -394,12 +406,11 @@ bool InlineTree::try_to_inline(ciMethod* callee_method, ciMethod* caller_method,
 
     // don't inline into giant methods
     if (C->over_inlining_cutoff()) {
-      if ((!callee_method->force_inline() && !caller_method->is_compiled_lambda_form())
-          || !IncrementalInline) {
+      if (IncrementalInline && (callee_trivial || callee_method->force_inline() || caller_method->is_compiled_lambda_form())) {
+        should_delay = !C->inlining_incrementally();
+      } else {
         set_msg("NodeCountInliningCutoff");
         return false;
-      } else {
-        should_delay = true;
       }
     }
 
@@ -407,12 +418,12 @@ bool InlineTree::try_to_inline(ciMethod* callee_method, ciMethod* caller_method,
         is_init_with_ea(callee_method, caller_method, C)) {
       // Escape Analysis stress testing when running Xcomp:
       // inline constructors even if they are not reached.
-    } else if (forced_inline()) {
+    } else if (callee_trivial || forced_inline()) {
       // Inlining was forced by CompilerOracle, ciReplay or annotation
     } else if (is_not_reached(callee_method, caller_method, caller_bci, profile)) {
       // don't inline unreached call sites
-       set_msg("call site not reached");
-       return false;
+      set_msg("call site not reached");
+      return false;
     }
   }
 
@@ -428,11 +439,11 @@ bool InlineTree::try_to_inline(ciMethod* callee_method, ciMethod* caller_method,
     return false;
   }
   if (inline_level() > _max_inline_level) {
-    if (!callee_method->force_inline() || !IncrementalInline) {
+    if (IncrementalInline && (callee_trivial || callee_method->force_inline())) {
+      should_delay = !C->inlining_incrementally();
+    } else {
       set_msg("inlining too deep");
       return false;
-    } else if (!C->inlining_incrementally()) {
-      should_delay = true;
     }
   }
 
@@ -474,11 +485,11 @@ bool InlineTree::try_to_inline(ciMethod* callee_method, ciMethod* caller_method,
   int size = callee_method->code_size_for_inlining();
 
   if (ClipInlining && (int)count_inline_bcs() + size >= DesiredMethodLimit) {
-    if (!callee_method->force_inline() || !IncrementalInline) {
+    if (IncrementalInline && (callee_trivial || callee_method->force_inline())) {
+      should_delay = !C->inlining_incrementally();
+    } else {
       set_msg("size > DesiredMethodLimit");
       return false;
-    } else if (!C->inlining_incrementally()) {
-      should_delay = true;
     }
   }
 
@@ -557,8 +568,8 @@ void InlineTree::print_inlining(ciMethod* callee_method, JVMState* jvm, bool suc
 }
 
 //------------------------------ok_to_inline-----------------------------------
-bool InlineTree::ok_to_inline(ciMethod* callee_method, JVMState* jvms, ciCallProfile& profile,
-                              bool& should_delay) {
+bool InlineTree::ok_to_inline(ciMethod* callee_method, JVMState* jvms,
+                              const ciCallProfile& profile, bool& should_delay) {
 #ifdef ASSERT
   assert(callee_method != nullptr, "caller checks for optimized virtual!");
   // Make sure the incoming jvms has the same information content as me.
@@ -588,8 +599,14 @@ bool InlineTree::ok_to_inline(ciMethod* callee_method, JVMState* jvms, ciCallPro
   }
 
   // Check if inlining policy says no.
-  bool success = try_to_inline(callee_method, caller_method, caller_bci, jvms, profile,
-                               should_delay); // out
+  bool success = try_to_inline(callee_method, caller_method, caller_bci, jvms, false, profile, should_delay);
+  if (!success) {
+    bool callee_trivial = BCTrivialAnalyzer::is_trivial(callee_method, jvms);
+    if (callee_trivial) {
+      success = try_to_inline(callee_method, caller_method, caller_bci, jvms, true, profile, should_delay);
+    }
+  }
+
   if (success) {
     // Inline!
     if (msg() == nullptr) {
