@@ -126,6 +126,11 @@ public:
     return DEBUG_ONLY(_adr_type) NOT_DEBUG(nullptr);
   }
 
+  void set_adr_type(const TypePtr* at) {
+    assert(!VerifyHashTableKeys || _hash_lock == 0, "remove node from hash table before modifying it");
+    DEBUG_ONLY(_adr_type = at; adr_type();)
+  }
+
   // Return the barrier data of n, if available, or 0 otherwise.
   static uint8_t barrier_data(const Node* n);
 

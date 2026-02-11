@@ -49,10 +49,12 @@
 #include "opto/regmask.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/traceMergeStoresTag.hpp"
+#include "opto/type.hpp"
 #include "opto/vectornode.hpp"
 #include "utilities/align.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/macros.hpp"
+#include "utilities/ostream.hpp"
 #include "utilities/powerOfTwo.hpp"
 #include "utilities/vmError.hpp"
 
@@ -4986,6 +4988,7 @@ Node* InitializeNode::capture_store(StoreNode* st, intptr_t start,
   new_st->set_req(MemNode::Control, in(Control));
   new_st->set_req(MemNode::Memory,  prev_mem);
   new_st->set_req(MemNode::Address, make_raw_address(start, phase));
+  new_st->as_Store()->set_adr_type(TypeRawPtr::BOTTOM);
   bs->eliminate_gc_barrier_data(new_st);
   new_st = phase->transform(new_st);
 
@@ -5885,13 +5888,27 @@ static void verify_memory_slice(const MergeMemNode* m, int alias_idx, Node* n) {
   if (!VerifyAliases)                return;  // don't bother to verify unless requested
   if (VMError::is_error_reported())  return;  // muzzle asserts when debugging an error
   if (Node::in_dump())               return;  // muzzle asserts when printing
-  assert(alias_idx >= Compile::AliasIdxRaw, "must not disturb base_memory or sentinel");
+
+  Compile* C = Compile::current();
+  if (!C->do_aliasing()) {
+    assert(alias_idx == Compile::AliasIdxBot, "unexpected alias_idx %d", alias_idx);
+    return;
+  }
+
+  assert(alias_idx != Compile::AliasIdxTop, "must not disturb top");
+  assert(alias_idx != Compile::AliasIdxBot, "must not disturb base_memory");
   assert(n != nullptr, "");
+
+  if (m->base_memory()->adr_type() == TypeRawPtr::BOTTOM) {
+    // This is the input memory of InitializeNode, it is weird
+    assert(m->base_memory()->is_Proj() && m->base_memory()->in(0)->is_Allocate(), "unexpected RawPtr as base_memory");
+    return;
+  }
+
   // Elide intervening MergeMem's
   while (n->is_MergeMem()) {
     n = n->as_MergeMem()->memory_at(alias_idx);
   }
-  Compile* C = Compile::current();
   const TypePtr* n_adr_type = n->adr_type();
   if (n == m->empty_memory()) {
     // Implicit copy of base_memory()
@@ -5912,7 +5929,12 @@ static void verify_memory_slice(const MergeMemNode* m, int alias_idx, Node* n) {
       // are write-once.  Allow this also.
       expected_wide_mem = true;
     }
-    assert(expected_wide_mem, "expected narrow slice replacement");
+    if (!expected_wide_mem) {
+      stringStream ss;
+      ss.print("unexpected assignment of wide mem: %s to alias class: ", n->Name());
+      C->get_adr_type(alias_idx)->dump_on(&ss);
+      assert(false, "%s", ss.as_string(true));
+    }
   }
 }
 #else // !ASSERT

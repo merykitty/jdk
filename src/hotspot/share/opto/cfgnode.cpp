@@ -1191,9 +1191,15 @@ void PhiNode::verify_adr_type(bool recursive) const {
   if (VMError::is_error_reported())  return;  // muzzle asserts when debugging an error
   if (Node::in_dump())               return;  // muzzle asserts when printing
 
-  assert((_type == Type::MEMORY) == (_adr_type != nullptr), "adr_type for memory phis only");
+  if (_type != Type::MEMORY) {
+    assert(_adr_type == nullptr, "adr_type for memory phis only");
+    return;
+  }
 
-  if (!VerifyAliases)       return;  // verify thoroughly only if requested
+  assert(_adr_type != nullptr, "memory phi must have adr_type");
+  if (!VerifyAliases) {
+    return; // verify thoroughly only if requested
+  }
 
   assert(_adr_type == flatten_phi_adr_type(_adr_type),
          "Phi::adr_type must be pre-normalized");
