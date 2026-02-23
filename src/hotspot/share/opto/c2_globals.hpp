@@ -368,6 +368,9 @@
           "LoopMultiversioning or UseAutoVectorizationPredicate are"        \
           "enabled.")                                                       \
                                                                             \
+  product(uint, AutoVectorizationAlignmentIterThreshold, 0, DIAGNOSTIC,     \
+          "")                                                               \
+                                                                            \
   product(bool, AllowVectorizeOnDemand, true,                               \
           "Globally suppress vectorization set in VectorizeMethod")         \
                                                                             \

@@ -2104,6 +2104,9 @@ void PhaseIdealLoop::do_unroll(IdealLoopTree *loop, Node_List &old_new, bool adj
   // by the min-trip test.  See bug 4834191 for a case where we over-unrolled
   // and later determined that part of the unrolled loop was dead.
   loop_head->set_trip_count(old_trip_count / 2);
+  if (loop_head->profile_trip_cnt() > 0) {
+    loop_head->set_profile_trip_cnt(loop_head->profile_trip_cnt() / 2);
+  }
 
   // Double the count of original iterations in the unrolled loop body.
   loop_head->double_unrolled_count();

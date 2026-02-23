@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -36,6 +36,7 @@
 #include "opto/runtime.hpp"
 #include "opto/subnode.hpp"
 #include "opto/subtypenode.hpp"
+#include "runtime/deoptimization.hpp"
 
 // Portions of code courtesy of Clifford Click
 
@@ -2181,6 +2182,7 @@ ParsePredicateNode::ParsePredicateNode(Node* control, Deoptimization::DeoptReaso
     case Deoptimization::Reason_profile_predicate:
     case Deoptimization::Reason_auto_vectorization_check:
     case Deoptimization::Reason_loop_limit_check:
+    case Deoptimization::Reason_short_running_loop:
     case Deoptimization::Reason_short_running_long_loop:
       break;
     default:
@@ -2229,6 +2231,9 @@ void ParsePredicateNode::dump_spec(outputStream* st) const {
       break;
     case Deoptimization::DeoptReason::Reason_loop_limit_check:
       st->print("Loop_Limit_Check ");
+      break;
+    case Deoptimization::DeoptReason::Reason_short_running_loop:
+      st->print("Short_Running_Loop ");
       break;
     case Deoptimization::DeoptReason::Reason_short_running_long_loop:
       st->print("Short_Running_Long_Loop ");

@@ -588,19 +588,23 @@ class LoopLimitNode : public Node {
 // Support for strip mining
 class OuterStripMinedLoopNode : public LoopNode {
 private:
+  // If the trip count is small, we do not need this outer loop and it can be removed during macro
+  // expansion
+  bool _useless;
+
   void fix_sunk_stores_when_back_to_counted_loop(PhaseIterGVN* igvn, PhaseIdealLoop* iloop) const;
   void handle_sunk_stores_when_finishing_construction(PhaseIterGVN* igvn);
 
 public:
   OuterStripMinedLoopNode(Compile* C, Node *entry, Node *backedge)
-    : LoopNode(entry, backedge) {
+    : LoopNode(entry, backedge), _useless(false) {
     init_class_id(Class_OuterStripMinedLoop);
     init_flags(Flag_is_macro);
     C->add_macro_node(this);
   }
 
   virtual int Opcode() const;
-
+  virtual uint size_of() const { return sizeof(*this); }
   virtual IfTrueNode* outer_loop_tail() const;
   virtual OuterStripMinedLoopEndNode* outer_loop_end() const;
   virtual IfFalseNode* outer_loop_exit() const;
@@ -608,6 +612,9 @@ public:
   CountedLoopNode* inner_counted_loop() const { return unique_ctrl_out()->as_CountedLoop(); }
   CountedLoopEndNode* inner_counted_loop_end() const { return  inner_counted_loop()->loopexit(); }
   IfFalseNode* inner_loop_exit() const { return inner_counted_loop_end()->false_proj(); }
+
+  bool is_useless() const { return _useless; }
+  void mark_useless() { _useless = true; }
 
   void adjust_strip_mined_loop(PhaseIterGVN* igvn);
 
@@ -1367,6 +1374,7 @@ public:
   IdealLoopTree* create_outer_strip_mined_loop(Node* init_control,
                                                IdealLoopTree* loop, float cl_prob, float le_fcnt,
                                                Node*& entry_control, Node*& iffalse);
+  void try_mark_outer_strip_mined_loop_useless(IdealLoopTree* inner);
 
   Node* exact_limit( IdealLoopTree *loop );
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -118,10 +118,11 @@ class Deoptimization : AllStatic {
     Reason_unstable_fused_if,     // fused two ifs that had each one untaken branch. One is now taken.
     Reason_receiver_constraint,   // receiver subtype check failed
     Reason_not_compiled_exception_handler, // missing compiled exception handler
-    Reason_short_running_long_loop,    // profile reports loop runs for small number of iterations
+    Reason_short_running_loop,    // short loop does not need strip mining
+    Reason_short_running_long_loop, // profile reports loop runs for small number of iterations
 #if INCLUDE_JVMCI
-    Reason_aliasing = Reason_short_running_long_loop, // optimistic assumption about aliasing failed
-    Reason_transfer_to_interpreter, // explicit transferToInterpreter()
+    Reason_aliasing                = Reason_short_running_loop,      // optimistic assumption about aliasing failed
+    Reason_transfer_to_interpreter = Reason_short_running_long_loop, // explicit transferToInterpreter()
     Reason_unresolved,
     Reason_jsr_mismatch,
 #endif
