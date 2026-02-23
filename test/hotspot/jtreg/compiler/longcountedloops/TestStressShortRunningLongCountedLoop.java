@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Red Hat, Inc. All rights reserved.
+ * Copyright (c) 2025, 2026, Red Hat, Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -42,10 +42,10 @@ public class TestStressShortRunningLongCountedLoop {
     }
 
     @Test
-    @IR(applyIf = { "StressShortRunningLongLoop", "true" }, counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
+    @IR(applyIf = { "StressShortRunningLongLoop", "true" }, counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
     @IR(applyIf = { "StressShortRunningLongLoop", "true" }, failOn = { IRNode.LOOP })
     @IR(applyIf = { "StressShortRunningLongLoop", "false" }, counts = { IRNode.COUNTED_LOOP, "1", IRNode.LOOP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
-    @IR(applyIf = { "StressShortRunningLongLoop", "false" }, failOn = { IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(applyIf = { "StressShortRunningLongLoop", "false" }, failOn = { IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopUnknownBoundsShortLoop(long start, long stop) {
         int j = 0;
         for (long i = start; i < stop; i++) {

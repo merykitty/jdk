@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,7 @@
 #include "opto/cfgnode.hpp"
 #include "opto/opaquenode.hpp"
 #include "opto/predicates_enums.hpp"
+#include "runtime/deoptimization.hpp"
 
 class IdealLoopTree;
 class InitializedAssertionPredicate;
@@ -818,6 +819,8 @@ class PredicateIterator : public StackObj {
     Node* current_node = _start_node;
     PredicateBlockIterator loop_limit_check_predicate_iterator(current_node, Deoptimization::Reason_loop_limit_check);
     current_node = loop_limit_check_predicate_iterator.for_each(predicate_visitor);
+    PredicateBlockIterator short_running_loop_predicate_iterator(current_node, Deoptimization::Reason_short_running_loop);
+    current_node = short_running_loop_predicate_iterator.for_each(predicate_visitor);
     if (UseAutoVectorizationPredicate) {
       PredicateBlockIterator auto_vectorization_check_iterator(current_node, Deoptimization::Reason_auto_vectorization_check);
       current_node = auto_vectorization_check_iterator.for_each(predicate_visitor);
@@ -830,8 +833,8 @@ class PredicateIterator : public StackObj {
       PredicateBlockIterator loop_predicate_iterator(current_node, Deoptimization::Reason_predicate);
       current_node = loop_predicate_iterator.for_each(predicate_visitor);
     }
-    PredicateBlockIterator short_running_loop_predicate_iterator(current_node, Deoptimization::Reason_short_running_long_loop);
-    return short_running_loop_predicate_iterator.for_each(predicate_visitor);
+    PredicateBlockIterator short_running_long_loop_predicate_iterator(current_node, Deoptimization::Reason_short_running_long_loop);
+    return short_running_long_loop_predicate_iterator.for_each(predicate_visitor);
   }
 };
 
@@ -995,6 +998,7 @@ class PredicateBlock : public StackObj {
 class Predicates : public StackObj {
   Node* const _tail;
   const PredicateBlock _loop_limit_check_predicate_block;
+  const PredicateBlock _short_running_loop_predicate_block;
   const PredicateBlock _auto_vectorization_check_block;
   const PredicateBlock _profiled_loop_predicate_block;
   const PredicateBlock _loop_predicate_block;
@@ -1005,7 +1009,9 @@ class Predicates : public StackObj {
   explicit Predicates(Node* loop_entry)
       : _tail(loop_entry),
         _loop_limit_check_predicate_block(loop_entry, Deoptimization::Reason_loop_limit_check),
-        _auto_vectorization_check_block(_loop_limit_check_predicate_block.entry(),
+        _short_running_loop_predicate_block(_loop_limit_check_predicate_block.entry(),
+                                            Deoptimization::Reason_short_running_loop),
+        _auto_vectorization_check_block(_short_running_loop_predicate_block.entry(),
                                         Deoptimization::Reason_auto_vectorization_check),
         _profiled_loop_predicate_block(_auto_vectorization_check_block.entry(),
                                        Deoptimization::Reason_profile_predicate),
@@ -1036,6 +1042,10 @@ class Predicates : public StackObj {
 
   const PredicateBlock* loop_limit_check_predicate_block() const {
     return &_loop_limit_check_predicate_block;
+  }
+
+  const PredicateBlock* short_running_loop_predicate_block() const {
+    return &_short_running_loop_predicate_block;
   }
 
   const PredicateBlock* short_running_long_loop_predicate_block() const {

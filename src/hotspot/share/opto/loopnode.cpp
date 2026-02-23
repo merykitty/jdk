@@ -43,12 +43,18 @@
 #include "opto/mulnode.hpp"
 #include "opto/opaquenode.hpp"
 #include "opto/opcodes.hpp"
+#include "opto/phasetype.hpp"
 #include "opto/predicates.hpp"
+#include "opto/predicates_enums.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
+#include "opto/subnode.hpp"
 #include "opto/vectorization.hpp"
+#include "runtime/deoptimization.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "utilities/checkedCast.hpp"
+#include "utilities/globalDefinitions.hpp"
+#include "utilities/ostream.hpp"
 #include "utilities/powerOfTwo.hpp"
 
 //=============================================================================
@@ -373,6 +379,108 @@ IdealLoopTree* PhaseIdealLoop::create_outer_strip_mined_loop(Node* init_control,
   set_idom(outer_l, init_control, dom_depth(init_control)+1);
 
   return outer_ilt;
+}
+
+// If the trip count is known to be small, mark the outer loop as useless, otherwise, if the trip
+// count is profiled to be small, insert a predicate and mark the outer loop as useless
+void PhaseIdealLoop::try_mark_outer_strip_mined_loop_useless(IdealLoopTree* inner) {
+  if (!inner->head()->is_CountedLoop()) {
+    return;
+  }
+
+  CountedLoopNode* inner_head = inner->head()->as_CountedLoop();
+  if (!inner_head->is_strip_mined()) {
+    return;
+  }
+
+  assert(inner_head->is_main_loop() || inner_head->is_normal_loop(), "must be a main loop or a normal loop");
+  IdealLoopTree* outer = inner->skip_strip_mined();
+  OuterStripMinedLoopNode* outer_head = outer->head()->as_OuterStripMinedLoop();
+  assert(inner_head->outer_loop() == outer_head, "unexpected strip mined loop shape");
+  if (outer_head->is_useless()) {
+    return;
+  } else if (inner_head->trip_count() <= LoopStripMiningIter) {
+    outer_head->mark_useless();
+    return;
+  } else if (inner_head->has_exact_trip_count() && inner_head->trip_count() > LoopStripMiningIter) {
+    return;
+  }
+
+  jint stride = inner_head->stride_con();
+  // Suppose the loop for (int i = init; i < limit; i += stride), the trip count is approximately:
+  // (limit - init) / stride
+  // In that case, to check that the trip count is not more than LoopStripMiningIter, the predicate
+  // condition will be:
+  // limit - init u<= LoopStripMiningIter * stride
+  // the comparison does not need to be exact and off-by-one error is fine
+  julong rhs = julong(LoopStripMiningIter) * julong(ABS(stride));
+  // If rhs overflows, the inequality always holds
+  if (LoopStripMiningIter > max_juint || rhs > max_juint) {
+    outer_head->mark_useless();
+    return;
+  }
+
+  if (inner_head->profile_trip_cnt() < 0 || inner_head->profile_trip_cnt() > LoopStripMiningIter) {
+    return;
+  }
+
+  Node* init;
+  Node* limit;
+  Node* predicate_head;
+  if (inner_head->is_normal_loop()) {
+    init = inner_head->init_trip();
+    limit = inner_head->limit();
+    predicate_head = outer_head;
+  } else {
+    // We only have predicates above the pre_loop, so try to recover the original init and limit
+    // values then place the predicate above the head of the pre_loop
+    CountedLoopEndNode* pre_end = inner_head->find_pre_loop_end();
+    if (pre_end == nullptr) {
+      return;
+    }
+    Opaque1Node* pre_opaque = pre_end->limit()->isa_Opaque1();
+    if (pre_opaque == nullptr) {
+      return;
+    }
+
+    CountedLoopNode* pre_head = pre_end->loopnode();
+    init = pre_head->init_trip();
+    limit = pre_opaque->original_loop_limit();
+    predicate_head = pre_head;
+  }
+
+  const Predicates predicates(predicate_head->in(LoopNode::EntryControl));
+  const PredicateBlock* short_running_loop_predicate_block = predicates.short_running_loop_predicate_block();
+  if (!short_running_loop_predicate_block->has_parse_predicate()) {
+    return;
+  }
+
+  // Build the control nodes, the condition of the IfNode will be created later
+  ParsePredicateSuccessProj* short_running_loop_predicate_proj = short_running_loop_predicate_block->parse_predicate_success_proj();
+  Node* short_running_loop_predicate = short_running_loop_predicate_proj->in(0);
+  assert(short_running_loop_predicate->is_ParsePredicate(), "must be parse predicate %s", short_running_loop_predicate->Name());
+  Node* new_predicate_proj = create_new_if_for_predicate(short_running_loop_predicate_proj, nullptr, Deoptimization::Reason_short_running_loop, Op_If);
+
+  // Build the data nodes
+  Node* lhs;
+  if (stride > 0) {
+    // If init <= limit, limit - init always fits into a juint
+    lhs = new SubINode(limit, init);
+  } else {
+    // If init >= limit, init - limit always fits into a juint
+    lhs = new SubINode(init, limit);
+  }
+  Node* cmp = new CmpUNode(lhs, intcon(jint(rhs)));
+  Node* bol = new BoolNode(cmp, BoolTest::le);
+
+  _igvn.register_new_node_with_optimizer(lhs);
+  _igvn.register_new_node_with_optimizer(cmp);
+  _igvn.register_new_node_with_optimizer(bol);
+  set_subtree_ctrl(bol, true);
+
+  Node* iff = new_predicate_proj->in(0);
+  _igvn.replace_input_of(iff, 1, bol);
+  outer_head->mark_useless();
 }
 
 void PhaseIdealLoop::insert_loop_limit_check_predicate(ParsePredicateSuccessProj* loop_limit_check_parse_proj,
@@ -775,6 +883,7 @@ void PhaseIdealLoop::add_parse_predicates(IdealLoopTree* outer_ilt, LoopNode* in
     add_parse_predicate(Deoptimization::Reason_auto_vectorization_check, inner_head, outer_ilt, cloned_sfpt);
   }
 
+  add_parse_predicate(Deoptimization::Reason_short_running_loop, inner_head, outer_ilt, cloned_sfpt);
   add_parse_predicate(Deoptimization::Reason_loop_limit_check, inner_head, outer_ilt, cloned_sfpt);
 }
 
@@ -3393,7 +3502,7 @@ void OuterStripMinedLoopNode::adjust_strip_mined_loop(PhaseIterGVN* igvn) {
     remove_outer_loop_and_safepoint(igvn);
     return;
   }
-  if (iter_estimate <= scaled_iters_long) {
+  if (is_useless()) {
     // We would only go through one iteration of
     // the outer loop: drop the outer loop but
     // keep the safepoint so we don't run for
@@ -5351,6 +5460,16 @@ void PhaseIdealLoop::build_and_optimize() {
           cl->mark_do_unroll_only();
         }
       }
+    }
+  }
+
+  // If the trip count of a strip mined loop is known to be small, mark the outer loop as useless,
+  // otherwise, if the trip count is profiled to be small, insert a predicate and mark the outer
+  // loop as useless.
+  if (!C->major_progress()) {
+    for (LoopTreeIterator iter(_ltree_root); !iter.done(); iter.next()) {
+      IdealLoopTree* lpt = iter.current();
+      try_mark_outer_strip_mined_loop_useless(lpt);
     }
   }
 

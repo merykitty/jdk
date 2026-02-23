@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Red Hat, Inc. All rights reserved.
+ * Copyright (c) 2025, 2026, Red Hat, Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -51,7 +51,7 @@ public class TestShortRunningLongCountedLoop {
     // Check IR only has a counted loop when bounds are known and loop run for a short time
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1" })
-    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopConstantBoundsShortLoop1() {
         int j = 0;
         for (long i = 0; i < 100; i++) {
@@ -71,7 +71,7 @@ public class TestShortRunningLongCountedLoop {
     // Same with stride > 1
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1" })
-    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopConstantBoundsShortLoop2() {
         int j = 0;
         for (long i = 0; i < 2000; i += 20) {
@@ -91,7 +91,7 @@ public class TestShortRunningLongCountedLoop {
     // Same with loop going downward
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1" })
-    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopConstantBoundsShortLoop3() {
         int j = 0;
         for (long i = 99; i >= 0; i--) {
@@ -111,7 +111,7 @@ public class TestShortRunningLongCountedLoop {
     // Same with loop going downward and stride > 1
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1" })
-    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopConstantBoundsShortLoop4() {
         int j = 0;
         for (long i = 1999; i >= 0; i-=20) {
@@ -131,7 +131,7 @@ public class TestShortRunningLongCountedLoop {
     // Check IR only has a counted loop when bounds are known but not exact and loop run for a short time
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1" })
-    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopConstantBoundsShortLoop5(int start, int stop) {
         start= Integer.max(start, 0);
         stop= Integer.min(stop, 999);
@@ -154,7 +154,7 @@ public class TestShortRunningLongCountedLoop {
     // Check that loop nest is created when bounds are known and loop is not short run
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.LOOP, "1"})
-    @IR(failOn = { IRNode.SHORT_RUNNING_LOOP_TRAP, IRNode.OUTER_STRIP_MINED_LOOP })
+    @IR(failOn = { IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, IRNode.OUTER_STRIP_MINED_LOOP })
     public static int testLongLoopConstantBoundsLongLoop1() {
         final long stride = Integer.MAX_VALUE / 1000;
         int j = 0;
@@ -175,7 +175,7 @@ public class TestShortRunningLongCountedLoop {
     // Same with negative stride
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.LOOP, "1"})
-    @IR(failOn = { IRNode.SHORT_RUNNING_LOOP_TRAP, IRNode.OUTER_STRIP_MINED_LOOP })
+    @IR(failOn = { IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, IRNode.OUTER_STRIP_MINED_LOOP })
     public static int testLongLoopConstantBoundsLongLoop2() {
         final long stride = Integer.MAX_VALUE / 1000;
         int j = 0;
@@ -195,7 +195,7 @@ public class TestShortRunningLongCountedLoop {
 
     // Check IR only has a counted loop when bounds are unknown but profile reports a short running loop
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
     @IR(failOn = { IRNode.LOOP })
     public static int testLongLoopUnknownBoundsShortLoop(long start, long stop) {
         int j = 0;
@@ -217,7 +217,7 @@ public class TestShortRunningLongCountedLoop {
 
     // same with stride > 1
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
     @IR(failOn = { IRNode.LOOP })
     public static int testLongLoopUnknownBoundsShortLoop2(long start, long stop) {
         int j = 0;
@@ -239,7 +239,7 @@ public class TestShortRunningLongCountedLoop {
 
     // same with negative stride
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
     @IR(failOn = { IRNode.LOOP })
     public static int testLongLoopUnknownBoundsShortLoop3(long start, long stop) {
         int j = 0;
@@ -261,7 +261,7 @@ public class TestShortRunningLongCountedLoop {
 
     // same with negative stride > 1
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
     @IR(failOn = { IRNode.LOOP })
     public static int testLongLoopUnknownBoundsShortLoop4(long start, long stop) {
         int j = 0;
@@ -284,7 +284,7 @@ public class TestShortRunningLongCountedLoop {
     // Check that loop nest is created when bounds are not known but profile reports loop is not short run
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1", IRNode.LOOP,  "1"})
-    @IR(failOn = { IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopUnknownBoundsLongLoop1(long start, long stop, long range) {
         int j = 0;
         for (long i = start; i < stop; i++) {
@@ -307,7 +307,7 @@ public class TestShortRunningLongCountedLoop {
     // same with negative stride
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1", IRNode.LOOP,  "1"})
-    @IR(failOn = { IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopUnknownBoundsLongLoop2(long start, long stop, long range) {
         int j = 0;
         for (long i = start; i >= stop; i--) {
@@ -330,7 +330,7 @@ public class TestShortRunningLongCountedLoop {
     // Check IR has a loop nest when bounds are unknown, profile reports a short running loop but trap is taken
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.LOOP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
-    @IR(failOn = { IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopUnknownBoundsShortLoopFailedSpeculation(long start, long stop, long range) {
         int j = 0;
         for (long i = start; i < stop; i++) {
@@ -372,7 +372,7 @@ public class TestShortRunningLongCountedLoop {
     // Check IR has a loop nest when bounds are known, is short running loop but trap was taken
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1"  })
-    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static int testLongLoopKnownBoundsShortLoopFailedSpeculation() {
         return testLongLoopKnownBoundsShortLoopFailedSpeculationHelper(0, 100);
     }
@@ -420,7 +420,7 @@ public class TestShortRunningLongCountedLoop {
     // Check range check can be eliminated by predication
     @Test
     @IR(counts = { IRNode.PREDICATE_TRAP, "1" })
-    @IR(failOn = { IRNode.COUNTED_LOOP, IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.COUNTED_LOOP, IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static void testLongLoopConstantBoundsPredication(long range) {
         for (long i = 0; i < 100; i++) {
             Objects.checkIndex(i, range);
@@ -433,7 +433,7 @@ public class TestShortRunningLongCountedLoop {
     }
 
     @Test
-    @IR(counts = { IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1" })
+    @IR(counts = { IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1" })
     @IR(failOn = { IRNode.COUNTED_LOOP, IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP })
     public static void testLongLoopUnknownBoundsShortLoopPredication(long start, long stop, long range) {
         for (long i = start; i < stop; i++) {
@@ -451,7 +451,7 @@ public class TestShortRunningLongCountedLoop {
     static final long veryLargeScale = Integer.MAX_VALUE / 99;
     @Test
     @IR(counts = { IRNode.LOOP, "1", IRNode.PREDICATE_TRAP, "2"})
-    @IR(failOn = { IRNode.COUNTED_LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.COUNTED_LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static void testLongLoopConstantBoundsLargeScale(long range) {
         for (long i = 0; i < 100; i++) {
             Objects.checkIndex(veryLargeScale * i, range);
@@ -465,7 +465,7 @@ public class TestShortRunningLongCountedLoop {
 
     @Test
     @IR(counts = { IRNode.LOOP, "1", IRNode.PREDICATE_TRAP, "2"})
-    @IR(failOn = { IRNode.COUNTED_LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.COUNTED_LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static void testLongLoopUnknownBoundsShortLoopLargeScale(long start, long stop, long range) {
         for (long i = start; i < stop; i++) {
             Objects.checkIndex(veryLargeScale * i, range);
@@ -481,7 +481,7 @@ public class TestShortRunningLongCountedLoop {
     // Check IR only has a counted loop when bounds are known and loop run for a short time (int loop case)
     @Test
     @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.PREDICATE_TRAP, "1" })
-    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LOOP_TRAP })
+    @IR(failOn = { IRNode.LOOP, IRNode.OUTER_STRIP_MINED_LOOP, IRNode.SHORT_RUNNING_LONG_LOOP_TRAP })
     public static void testIntLoopConstantBoundsShortLoop1(long range) {
         for (int i = 0; i < 100; i++) {
             Objects.checkIndex(i, range);
@@ -496,7 +496,7 @@ public class TestShortRunningLongCountedLoop {
 
     // Check IR only has a counted loop when bounds are unknown but profile reports a short running loop (int loop case)
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
     @IR(failOn = { IRNode.LOOP })
     public static void testIntLoopUnknownBoundsShortLoop(int start, int stop, long range) {
         for (int i = start; i < stop; i++) {
@@ -513,7 +513,7 @@ public class TestShortRunningLongCountedLoop {
 
     // Same with unswitched loop
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "2", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "2" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "2", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "2" })
     @IR(failOn = { IRNode.LOOP })
     public static void testIntLoopUnknownBoundsShortUnswitchedLoop(int start, int stop, long range, boolean flag) {
         for (int i = start; i < stop; i++) {
@@ -535,7 +535,7 @@ public class TestShortRunningLongCountedLoop {
     }
 
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "2", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "2" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "2", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.PREDICATE_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "2" })
     @IR(failOn = { IRNode.LOOP })
     public static void testLongLoopUnknownBoundsShortUnswitchedLoop(long start, long stop, long range, boolean flag) {
         for (long i = start; i < stop; i++) {
@@ -557,7 +557,7 @@ public class TestShortRunningLongCountedLoop {
     }
 
     @Test
-    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
+    @IR(counts = { IRNode.COUNTED_LOOP, "1", IRNode.SHORT_RUNNING_LONG_LOOP_TRAP, "1", IRNode.OUTER_STRIP_MINED_LOOP, "1" })
     @IR(failOn = { IRNode.LOOP })
     public static int testLongLoopUnknownBoundsAddLimitShortLoop(int stop1, long stop2) {
         int j = 0;

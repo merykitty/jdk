@@ -32,6 +32,7 @@
 #include "interpreter/interpreter.hpp"
 #include "memory/resourceArea.hpp"
 #include "opto/addnode.hpp"
+#include "opto/c2_globals.hpp"
 #include "opto/castnode.hpp"
 #include "opto/convertnode.hpp"
 #include "opto/graphKit.hpp"
@@ -4094,6 +4095,7 @@ void GraphKit::add_parse_predicates(int nargs) {
   if (UseAutoVectorizationPredicate) {
     add_parse_predicate(Deoptimization::Reason_auto_vectorization_check, nargs);
   }
+  add_parse_predicate(Deoptimization::Reason_short_running_loop, nargs);
   // Loop Limit Check Predicate should be near the loop.
   add_parse_predicate(Deoptimization::Reason_loop_limit_check, nargs);
 }

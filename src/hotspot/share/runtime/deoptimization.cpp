@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2026, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -2768,8 +2768,8 @@ const char* Deoptimization::_trap_reason_name[] = {
   "receiver_constraint",
   "not_compiled_exception_handler",
   "short_running_loop" JVMCI_ONLY("_or_aliasing"),
+  "short_running_long_loop" JVMCI_ONLY("_or_transfer_to_interpreter"),
 #if INCLUDE_JVMCI
-  "transfer_to_interpreter",
   "unresolved",
   "jsr_mismatch",
 #endif
