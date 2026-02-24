@@ -597,7 +597,7 @@ private:
 
 public:
   OuterStripMinedLoopNode(Compile* C, Node *entry, Node *backedge)
-    : LoopNode(entry, backedge), _useless(false) {
+    : LoopNode(entry, backedge), _useless(true) {
     init_class_id(Class_OuterStripMinedLoop);
     init_flags(Flag_is_macro);
     C->add_macro_node(this);
@@ -1370,11 +1370,12 @@ public:
 
   void add_parse_predicates(IdealLoopTree* outer_ilt, LoopNode* inner_head, SafePointNode* cloned_sfpt);
 
+  bool add_short_running_loop_predicate(CountedLoopNode* inner_head, uint max_iter);
+
   IdealLoopTree* insert_outer_loop(IdealLoopTree* loop, LoopNode* outer_l, Node* outer_ift);
   IdealLoopTree* create_outer_strip_mined_loop(Node* init_control,
                                                IdealLoopTree* loop, float cl_prob, float le_fcnt,
                                                Node*& entry_control, Node*& iffalse);
-  void try_mark_outer_strip_mined_loop_useless(IdealLoopTree* inner);
 
   Node* exact_limit( IdealLoopTree *loop );
 

@@ -22,6 +22,7 @@
  */
 
 #include "opto/addnode.hpp"
+#include "opto/c2_globals.hpp"
 #include "opto/castnode.hpp"
 #include "opto/convertnode.hpp"
 #include "opto/memnode.hpp"
@@ -2760,6 +2761,18 @@ void VTransform::adjust_pre_loop_limit_to_align_main_loop_vectors() {
       tty->print_cr("\nVTransform::adjust_pre_loop_limit_to_align_main_loop_vectors: disabled.");
     }
 #endif
+    return;
+  }
+
+  if (!VLoop::vectors_should_be_aligned() && phase()->add_short_running_loop_predicate(cl(), AutoVectorizationAlignmentIterThreshold)) {
+#ifdef ASSERT
+    if (_trace._align_vector) {
+      tty->print_cr("\nVTransform::adjust_pre_loop_limit_to_align_main_loop_vectors: short running loop.");
+    }
+#endif
+    if (AutoVectorizationAlignmentIterThreshold <= LoopStripMiningIter) {
+      cl()->outer_loop()->mark_useless();
+    }
     return;
   }
 

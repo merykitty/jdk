@@ -44,9 +44,7 @@ import java.util.concurrent.TimeUnit;
 @Measurement(iterations = 5, time = 2, timeUnit = TimeUnit.SECONDS)
 @Fork(value = 1)
 public abstract class VectorAutoAlignment {
-    @Param({"1024", "1152", "1280", "1408", "1536", "1664", "1792", "1920", "1984", "2048", "2114",
-            "2176", "2304", "2432", "2560", "2688", "2816", "2944", "3072", "3200", "3328", "3456",
-            "3584", "3712", "3840", "3968", "4096", "4224", "4352", "4480"})
+    @Param({"160", "320", "480", "640", "800"})
     public int SIZE;
 
     private MemorySegment ms;
