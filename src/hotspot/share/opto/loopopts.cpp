@@ -926,6 +926,132 @@ static void enqueue_cfg_uses(Node* m, Unique_Node_List& wq) {
   }
 }
 
+// If all the inputs of a LoadNode ld are loop-invariants except the memory input, and we can prove
+// that no nodes inside the loop modify the memory location from which ld reads, then we can change
+// the memory input to the loop entry so that the load can be scheduled outside the loop. This must
+// be called during the computation of the early of ld.
+bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
+  Node* early = get_early_ctrl(ld);
+  IdealLoopTree* loop_early = get_loop(early);
+
+  // The limit above which ld can be hoisted, this is the loop closest to the root such that all of
+  // the inputs except the memory input are loop-invariants. This is computed by walking up the
+  // loop hierarchy and stop at the loop in which at least 1 input is not a loop-invariant, also
+  // stop when encounter an irreducible loop.
+  IdealLoopTree* loop_limit = nullptr;
+  for (IdealLoopTree* current_loop = loop_early;; current_loop = current_loop->_parent) {
+    assert(current_loop != nullptr, "cannot be invariants of root");
+
+    // Cannot hoist above an irreducible loop, cannot decide to which entry to hoist
+    if (current_loop->_irreducible) {
+      break;
+    }
+
+    bool not_invariant = false;
+    for (uint i = 0; i < ld->req(); i++) {
+      if (i == MemNode::Memory) {
+        continue;
+      }
+
+      Node* in = ld->in(i);
+      if (in == nullptr) {
+        assert(i == 0, "unexpected nullptr input of %s at %d", ld->Name(), i);
+        continue;
+      }
+
+      if (!current_loop->is_invariant(in)) {
+        not_invariant = true;
+        break;
+      }
+    }
+
+    if (not_invariant) {
+      break;
+    }
+
+    loop_limit = current_loop;
+  }
+
+  // Nowhere to hoist
+  if (loop_limit == nullptr) {
+    return false;
+  }
+
+  // In each iteration, collect all nodes that may affect the result of ld in the current loop,
+  // these are collected by walking the memory graph from the memory input of ld
+  ResourceMark rm;
+  Unique_Node_List worklist;
+  worklist.push(ld->in(MemNode::Memory));
+  assert(!loop_early->is_invariant(ld->in(MemNode::Memory)), "must not be a loop-invariant");
+  // The new memory input of ld if it can be hoisted, it is the entry input of the outermost loop
+  // above which ld can be hoisted
+  Node* new_mem = nullptr;
+  uint worklist_idx = 0;
+
+  // Walk up the loop hierarchy and stop at the loop above which ld cannot be hoisted. At each
+  // iteration, collect all memory nodes corresponding to ld in the loop, and if all of them is
+  // provably decided to not interfere with ld, we can hoist ld above the current loop, and
+  // continue processing its parent.
+  for (IdealLoopTree* current_loop = loop_early; loop_limit->is_member(current_loop); current_loop = current_loop->_parent) {
+    PhiNode* loop_head_mem = nullptr;
+    bool may_have_update_in_loop = false;
+    for (; worklist_idx < worklist.size(); worklist_idx++) {
+      Node* mem = worklist.at(worklist_idx);
+#ifdef ASSERT
+      if (has_ctrl(mem)) {
+        Node* ctrl = get_ctrl(mem);
+        assert(!current_loop->is_invariant(ctrl), "must still be inside the loop");
+      }
+#endif // ASSERT
+
+      if (mem->is_Phi()) {
+        // Push all inputs of Phi in the loop into worklist
+        if (mem->in(0) == current_loop->head()) {
+          assert(loop_head_mem == nullptr || loop_head_mem == mem, "only 1 memory phi at loop head");
+          loop_head_mem = mem->as_Phi();
+          // Only the loop back edge is inside the loop
+          worklist.push(mem->in(LoopNode::LoopBackControl));
+        } else {
+          for (uint i = 1; i < mem->req(); i++) {
+            worklist.push(mem->in(i));
+          }
+        }
+        continue;
+      }
+
+      MemNode::AccessIndependence access_independence = ld->detect_access_independence(&_igvn, mem);
+      if (!access_independence.independent) {
+        may_have_update_in_loop = true;
+        break;
+      }
+
+      worklist.push(access_independence.mem);
+    }
+
+    if (may_have_update_in_loop) {
+      break;
+    }
+
+    assert(loop_head_mem != nullptr, "must have a memory phi at the loop head");
+    new_mem = loop_head_mem->in(LoopNode::EntryControl);
+
+    // A memory node that may interfere with ld must be new_mem or one of its transitive inputs
+    // because the loop entry dominates the whole loop body. As a result, starting walking the
+    // memory graph from new_mem will visit all memory nodes corresponding to the alias class of ld
+    // in the new next current_loop. Furthermore, since we have processed all memory nodes in the
+    // child loop, and a node in the child loop is also in the parent loop, we do not need to
+    // process the processed node again.
+    worklist.push(new_mem);
+  }
+
+  if (new_mem == nullptr) {
+    return false;
+  }
+
+  _igvn.replace_input_of(ld, MemNode::Memory, new_mem);
+  return true;
+}
+
 // Try moving a store out of a loop, right before the loop
 Node* PhaseIdealLoop::try_move_store_before_loop(Node* n, Node *n_ctrl) {
   // Store has to be first in the loop body
