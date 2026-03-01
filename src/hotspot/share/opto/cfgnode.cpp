@@ -655,13 +655,15 @@ Node *RegionNode::Ideal(PhaseGVN *phase, bool can_reshape) {
       return nullptr;
     } else if (can_reshape) {   // Optimization phase - remove the node
       PhaseIterGVN *igvn = phase->is_IterGVN();
-      // Strip mined (inner) loop is going away, remove outer loop.
+      // Strip mined (inner) loop is going away, remove outer loop and its safepoint.
       if (is_CountedLoop() &&
           as_Loop()->is_strip_mined()) {
         Node* outer_sfpt = as_CountedLoop()->outer_safepoint();
         Node* outer_out = as_CountedLoop()->outer_loop_exit();
         if (outer_sfpt != nullptr && outer_out != nullptr) {
           Node* in = outer_sfpt->in(0);
+          // If we don't yank the control input of outer_sfpt, in will have 2 CFG successors
+          igvn->replace_input_of(outer_sfpt, 0, igvn->C->top());
           igvn->replace_node(outer_out, in);
           LoopNode* outer = as_CountedLoop()->outer_loop();
           igvn->replace_input_of(outer, LoopNode::LoopBackControl, igvn->C->top());
