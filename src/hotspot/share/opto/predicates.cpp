@@ -712,16 +712,6 @@ class AssertionPredicateExpressionCreator : public StackObj {
     return new_expression;
   }
 
- public:
-  // Create the expression for an Initialized Assertion Predicate with an OpaqueInitializedAssertionPredicate node.
-  OpaqueInitializedAssertionPredicateNode* create_for_initialized(Node* new_control, Node* operand,
-                                                                  bool& does_overflow) const {
-    BoolNode* bool_for_expression = _phase->rc_predicate(new_control, _scale, _offset, operand, nullptr,
-                                                         _stride, _range, _upper, does_overflow);
-    return create_opaque_for_initialized(new_control, bool_for_expression);
-  }
-
- private:
   OpaqueInitializedAssertionPredicateNode* create_opaque_for_initialized(Node* new_control,
                                                                          BoolNode* bool_for_expression) const {
     OpaqueInitializedAssertionPredicateNode* new_expression =
@@ -919,20 +909,6 @@ InitializedAssertionPredicate InitializedAssertionPredicateCreator::create_from_
   IfTrueNode* success_proj = create_control_nodes(template_assertion_predicate_success_proj, if_opcode,
                                                   assertion_expression, assertion_predicate_type);
   return InitializedAssertionPredicate(success_proj);
-}
-
-// Create a new Initialized Assertion Predicate directly without a template.
-IfTrueNode* InitializedAssertionPredicateCreator::create(Node* operand, Node* new_control, const jint stride,
-                                                         const int scale, Node* offset, Node* range,
-                                                         const AssertionPredicateType assertion_predicate_type) const {
-  AssertionPredicateExpressionCreator expression_creator(stride, scale, offset, range, _phase);
-  bool does_overflow;
-  OpaqueInitializedAssertionPredicateNode* assertion_expression =
-      expression_creator.create_for_initialized(new_control, operand, does_overflow);
-  IfTrueNode* success_proj = create_control_nodes(new_control, does_overflow ? Op_If : Op_RangeCheck,
-                                                  assertion_expression, assertion_predicate_type);
-  DEBUG_ONLY(InitializedAssertionPredicate::verify(success_proj);)
-  return success_proj;
 }
 
 // Creates the CFG nodes for the Initialized Assertion Predicate.

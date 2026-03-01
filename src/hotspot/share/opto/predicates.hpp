@@ -688,8 +688,6 @@ class InitializedAssertionPredicateCreator : public StackObj {
 
   InitializedAssertionPredicate
   create_from_template_and_insert_below(const TemplateAssertionPredicate& template_assertion_predicate) const;
-  IfTrueNode* create(Node* operand, Node* new_control, jint stride, int scale, Node* offset, Node* range,
-                     AssertionPredicateType assertion_predicate_type) const;
 
  private:
   OpaqueInitializedAssertionPredicateNode* create_assertion_expression_from_template(const IfNode* template_assertion_predicate,

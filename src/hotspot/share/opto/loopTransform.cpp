@@ -2690,7 +2690,6 @@ void PhaseIdealLoop::do_range_check(IdealLoopTree* loop) {
   // Must know if its a count-up or count-down loop
 
   int stride_con = cl->stride_con();
-  bool abs_stride_is_one = stride_con == 1 || stride_con == -1;
   Node* zero = longcon(0);
   Node* one  = longcon(1);
   // Use symmetrical int range [-max_jint,max_jint]
@@ -2698,15 +2697,6 @@ void PhaseIdealLoop::do_range_check(IdealLoopTree* loop) {
 
   Node* loop_entry = cl->skip_strip_mined()->in(LoopNode::EntryControl);
   assert(loop_entry->is_Proj() && loop_entry->in(0)->is_If(), "if projection only");
-
-  // if abs(stride) == 1, an Assertion Predicate for the final iv value is added. We don't know the final iv value until
-  // we're done with range check elimination so use a place holder.
-  Node* final_iv_placeholder = nullptr;
-  if (abs_stride_is_one) {
-    final_iv_placeholder = new Node(1);
-    _igvn.set_type(final_iv_placeholder, TypeInt::INT);
-    final_iv_placeholder->init_req(0, loop_entry);
-  }
 
   // Check loop body for tests of trip-counter plus loop-invariant vs loop-variant.
   for (uint i = 0; i < loop->_body.size(); i++) {
@@ -2814,42 +2804,6 @@ void PhaseIdealLoop::do_range_check(IdealLoopTree* loop) {
         if (b_test._test == BoolTest::lt) { // Range checks always use lt
           // The underflow and overflow limits: 0 <= scale*I+offset < limit
           add_constraint(stride_con, lscale_con, offset, zero, limit, next_limit_ctrl, &pre_limit, &main_limit);
-          Node* init = cl->uncasted_init_trip(true);
-
-          Node* opaque_init = new OpaqueLoopInitNode(C, init);
-          register_new_node(opaque_init, loop_entry);
-
-          InitializedAssertionPredicateCreator initialized_assertion_predicate_creator(this);
-          if (abs_stride_is_one) {
-            // If the main loop becomes empty and the array access for this range check is sunk out of the loop, the index
-            // for the array access will be set to the index value of the final iteration which could be out of loop.
-            // Add an Initialized Assertion Predicate for that corner case. The final iv is computed from LoopLimit which
-            // is the LoopNode::limit() only if abs(stride) == 1 otherwise the computation depends on LoopNode::init_trip()
-            // as well. When LoopLimit only depends on LoopNode::limit(), there are cases where the zero trip guard for
-            // the main loop doesn't constant fold after range check elimination but, the array access for the final
-            // iteration of the main loop is out of bound and the index for that access is out of range for the range
-            // check CastII.
-            // Note that we do not need to emit a Template Assertion Predicate to update this predicate. When further
-            // splitting this loop, the final IV will still be the same. When unrolling the loop, we will remove a
-            // previously added Initialized Assertion Predicate here. But then abs(stride) is greater than 1, and we
-            // cannot remove an empty loop with a constant limit when init is not a constant as well. We will use
-            // a LoopLimitCheck node that can only be folded if the zero grip guard is also foldable.
-            loop_entry = initialized_assertion_predicate_creator.create(final_iv_placeholder, loop_entry, stride_con,
-                                                                        scale_con, int_offset, int_limit,
-                                                                        AssertionPredicateType::FinalIv);
-          }
-
-          // Add two Template Assertion Predicates to create new Initialized Assertion Predicates from when either
-          // unrolling or splitting this main-loop further.
-          TemplateAssertionPredicateCreator template_assertion_predicate_creator(cl, scale_con , int_offset, int_limit,
-                                                                                 this);
-          loop_entry = template_assertion_predicate_creator.create(loop_entry);
-
-          // Initialized Assertion Predicate for the value of the initial main-loop.
-          loop_entry = initialized_assertion_predicate_creator.create(init, loop_entry, stride_con, scale_con,
-                                                                      int_offset, int_limit,
-                                                                      AssertionPredicateType::InitValue);
-
         } else {
           if (PrintOpto) {
             tty->print_cr("missed RCE opportunity");
@@ -2962,11 +2916,6 @@ void PhaseIdealLoop::do_range_check(IdealLoopTree* loop) {
   register_new_node(main_limit, new_limit_ctrl);
   // Hack the now-private loop bounds
   _igvn.replace_input_of(main_cmp, 2, main_limit);
-  if (abs_stride_is_one) {
-    Node* final_iv = new SubINode(main_limit, cl->stride());
-    register_new_node(final_iv, loop_entry);
-    _igvn.replace_node(final_iv_placeholder, final_iv);
-  }
   // The OpaqueNode is unshared by design
   assert(opqzm->outcnt() == 1, "cannot hack shared node");
   _igvn.replace_input_of(opqzm, 1, main_limit);
