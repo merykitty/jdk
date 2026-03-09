@@ -2886,9 +2886,6 @@ bool LibraryCallKit::inline_unsafe_load_store(const BasicType type, const LoadSt
 }
 
 bool LibraryCallKit::inline_unsafe_fence(vmIntrinsics::ID id) {
-  // Regardless of form, don't allow previous ld/st to move down,
-  // then issue acquire, release, or volatile mem_bar.
-  insert_mem_bar(Op_MemBarCPUOrder);
   switch(id) {
     case vmIntrinsics::_loadFence:
       insert_mem_bar(Op_LoadFence);
