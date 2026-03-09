@@ -25,6 +25,7 @@
 #ifndef SHARE_OPTO_LOOPNODE_HPP
 #define SHARE_OPTO_LOOPNODE_HPP
 
+#include "opto/c2_globals.hpp"
 #include "opto/cfgnode.hpp"
 #include "opto/multnode.hpp"
 #include "opto/phaseX.hpp"
@@ -1049,10 +1050,16 @@ public:
   Node *get_early_ctrl_for_expensive(Node *n, Node* earliest);
   void set_early_ctrl(Node* n, bool update_body);
   void set_subtree_ctrl(Node* n, bool update_body);
-  void set_ctrl( Node *n, Node *ctrl ) {
-    assert( !has_node(n) || has_ctrl(n), "" );
-    assert( ctrl->in(0), "cannot set dead control node" );
-    assert( ctrl == find_non_split_ctrl(ctrl), "must set legal crtl" );
+  void set_ctrl(Node* n, Node* ctrl) {
+#ifdef ASSERT
+    assert(!has_node(n) || has_ctrl(n), "");
+    assert(ctrl->in(0), "cannot set dead control node");
+    assert(ctrl == find_non_split_ctrl(ctrl), "must set legal crtl");
+    if (VerifyLoopOptimizations) {
+      // verify that the control is valid
+      compute_early_ctrl(n, ctrl);
+    }
+#endif // ASSERT
     _loop_or_ctrl.map(n->_idx, (Node*)((intptr_t)ctrl + 1));
   }
   void set_root_as_ctrl(Node* n) {
