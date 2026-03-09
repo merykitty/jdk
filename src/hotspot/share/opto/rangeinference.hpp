@@ -584,7 +584,7 @@ public:
       //
       // In other words:
       // max_carry[i - 1] == 1 iff either:
-      // + ((~st1._bits._ones)[i] | (~st2._bits._zeros)[i]) == 1
+      // + ((~st1._bits._ones)[i] & (~st2._bits._zeros)[i]) == 1
       // + ((st1._bits._ones[i] ^ st2._bits._zeros[i]) & tmp[i]) == 1
       U<CTP> max_carry = ((~st1._bits._ones & ~st2._bits._zeros) |
                           ((st1._bits._ones ^ st2._bits._zeros) & (st1._bits._ones - (~st2._bits._zeros))));
