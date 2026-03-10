@@ -6263,7 +6263,7 @@ void PhaseIdealLoop::build_loop_early( VectorSet &visited, Node_List &worklist, 
         if (!_verify_me && !_verify_only && n->is_Load()) {
           bool hoisted = try_move_load_before_loops(n->as_Load());
           if (hoisted) {
-            // If n is hoisted, it has a new memory input, process that input again
+            // If n is hoisted, it has a new memory input, we may need to process that input again
             nstack_top_i = MemNode::Memory;
             continue;
           }

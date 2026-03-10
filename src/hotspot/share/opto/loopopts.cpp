@@ -38,6 +38,7 @@
 #include "opto/mulnode.hpp"
 #include "opto/opaquenode.hpp"
 #include "opto/opcodes.hpp"
+#include "opto/phasetype.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/subnode.hpp"
 #include "opto/subtypenode.hpp"
@@ -933,6 +934,25 @@ static void enqueue_cfg_uses(Node* m, Unique_Node_List& wq) {
 // the memory input to the loop entry so that the load can be scheduled outside the loop. This must
 // be called during the computation of the early of ld.
 bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
+  AccessAnalyzer access_analyzer(&_igvn, ld);
+
+  // In rare cases, the memory input of a load is a MergeMem. This may be problematic because a
+  // MergeMem does not produce memory, so there may be no memory Phi for the loop the MergeMem is
+  // in that corresponds to ld. As a result, when the memory input is a MergeMem, replace it with
+  // the input corresponding to the load.
+  if (ld->in(MemNode::Memory)->is_MergeMem()) {
+    AccessAnalyzer::AccessIndependence access_independence = access_analyzer.detect_access_independence(ld->in(MemNode::Memory));
+    if (!access_independence.independent) {
+      // Some strange accesses
+      return false;
+    }
+
+    assert(access_independence.mem != nullptr, "must have a proper memory input");
+    assert(!access_independence.mem->is_MergeMem(), "connected MergeMems should have collapsed");
+    assert(has_node(access_independence.mem), "a non-phi node must not be scheduled before its inputs");
+    _igvn.replace_input_of(ld, MemNode::Memory, access_independence.mem);
+  }
+
   Node* early = get_early_ctrl(ld);
   IdealLoopTree* loop_early = get_loop(early);
 
@@ -947,6 +967,12 @@ bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
     // Cannot hoist above an irreducible loop, cannot decide to which entry to hoist
     if (current_loop->_irreducible) {
       break;
+    }
+
+    // Skip OuterStripMinedLoop, they don't have loop phis, and hoisting a load above the inner
+    // loop will result in it above the outer loop anyway
+    if (current_loop->head()->is_OuterStripMinedLoop()) {
+      continue;
     }
 
     bool not_invariant = false;
@@ -990,23 +1016,27 @@ bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
   Node* new_mem = nullptr;
   uint worklist_idx = 0;
 
-  AccessAnalyzer access_analyzer(&_igvn, ld);
-
   // Walk up the loop hierarchy and stop at the loop above which ld cannot be hoisted. At each
   // iteration, collect all memory nodes corresponding to ld in the loop, and if all of them is
   // provably decided to not interfere with ld, we can hoist ld above the current loop, and
   // continue processing its parent.
   for (IdealLoopTree* current_loop = loop_early; loop_limit->is_member(current_loop); current_loop = current_loop->_parent) {
+
+    // Skip OuterStripMinedLoop, they don't have loop phis, and hoisting a load above the inner
+    // loop will result in it above the outer loop anyway
+    if (current_loop->head()->is_OuterStripMinedLoop()) {
+      continue;
+    }
+
     PhiNode* loop_head_mem = nullptr;
     bool may_have_update_in_loop = false;
     for (; worklist_idx < worklist.size(); worklist_idx++) {
       Node* mem = worklist.at(worklist_idx);
-#ifdef ASSERT
-      if (has_ctrl(mem)) {
-        Node* ctrl = get_ctrl(mem);
-        assert(!current_loop->is_invariant(ctrl), "must still be inside the loop");
+      if (has_ctrl(mem) && current_loop->is_invariant(mem)) {
+        // We should only be able to step outside the loop from the loop phi, so this means the
+        // graph is broken, bail out for now
+        return false;
       }
-#endif // ASSERT
 
       if (mem->is_Phi()) {
         // Push all inputs of Phi in the loop into worklist
@@ -1025,11 +1055,11 @@ bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
         // In principle, moving a LoadNode above a loop is moving it before all accesses in the
         // loop. As a result, we can move it past a release barrier, or a store-store barrier. On
         // the other hand, we cannot hoist the load above a loop if there is an acquire barrier, a
-        // load-load barrier, or a full barrier in the loop. The store-store barrier case is
-        // handled in AccessAnalyzer::detect_access_independence.
+        // load-load barrier, or a full barrier in the loop.
         MemBarNode* membar = mem->in(0)->as_MemBar();
         int opc = membar->Opcode();
-        if (opc == Op_StoreFence || opc == Op_MemBarRelease || opc == Op_MemBarReleaseLock) {
+        if (opc == Op_StoreFence || opc == Op_MemBarRelease || opc == Op_MemBarReleaseLock ||
+            opc == Op_MemBarStoreStore || opc == Op_StoreStoreFence) {
           worklist.push(membar->in(TypeFunc::Memory));
           continue;
         }

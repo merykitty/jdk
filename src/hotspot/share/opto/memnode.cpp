@@ -809,6 +809,7 @@ AccessAnalyzer::AccessIndependence AccessAnalyzer::detect_access_independence(No
     return {false, nullptr};
   }
 
+  const TypeOopPtr* adr_oop_type = _adr_type->isa_oopptr();
   Node* prev = other;
   if (other->is_Store()) {
     Node* st_adr = other->in(MemNode::Address);
@@ -910,18 +911,7 @@ AccessAnalyzer::AccessIndependence AccessAnalyzer::detect_access_independence(No
     return {prev != other, other};
   } else if (other->is_MergeMem()) {
     return {true, other->as_MergeMem()->memory_at(_alias_idx)};
-  } else if (other->is_Proj() && other->in(0)->is_MemBar()) {
-    MemBarNode* membar = other->in(0)->as_MemBar();
-    int opc = membar->Opcode();
-    if (_n->is_Load()) {
-      if (opc == Op_MemBarStoreStore || opc == Op_StoreStoreFence) {
-        return {true, membar->in(TypeFunc::Memory)};
-      }
-    }
-  }
-
-  const TypeOopPtr* adr_oop_type = _adr_type->isa_oopptr();
-  if (adr_oop_type != nullptr && adr_oop_type->is_known_instance_field()) {
+  } else if (adr_oop_type != nullptr && adr_oop_type->is_known_instance_field()) {
     // Can't use optimize_simple_memory_chain() since it needs PhaseGVN.
     if (other->is_Proj() && other->in(0)->is_Call()) {
       // ArrayCopyNodes processed here as well.
