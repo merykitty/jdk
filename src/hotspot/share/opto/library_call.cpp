@@ -3062,7 +3062,7 @@ bool LibraryCallKit::inline_native_time_funcs(address funcAddr, const char* func
 //   slow path: runtime call
 // }
 bool LibraryCallKit::inline_native_vthread_start_transition(address funcAddr, const char* funcName, bool is_final_transition) {
-  Node* vt_oop = _gvn.transform(must_be_not_null(argument(0), true)); // VirtualThread this argument
+  Node* vt_oop = must_be_not_null(argument(0), true); // VirtualThread this argument
   IdealKit ideal(this);
 
   Node* thread = ideal.thread();
@@ -3081,7 +3081,7 @@ bool LibraryCallKit::inline_native_vthread_start_transition(address funcAddr, co
 
   ideal.if_then(disabled, BoolTest::ne, ideal.ConI(0)); {
     sync_kit(ideal);
-    Node* is_mount = is_final_transition ? ideal.ConI(0) : _gvn.transform(argument(1));
+    Node* is_mount = is_final_transition ? ideal.ConI(0) : argument(1);
     const TypeFunc* tf = OptoRuntime::vthread_transition_Type();
     make_runtime_call(RC_NO_LEAF, tf, funcAddr, funcName, TypePtr::BOTTOM, vt_oop, is_mount);
     ideal.sync_kit(this);
@@ -3093,7 +3093,7 @@ bool LibraryCallKit::inline_native_vthread_start_transition(address funcAddr, co
 }
 
 bool LibraryCallKit::inline_native_vthread_end_transition(address funcAddr, const char* funcName, bool is_first_transition) {
-  Node* vt_oop = _gvn.transform(must_be_not_null(argument(0), true)); // VirtualThread this argument
+  Node* vt_oop = must_be_not_null(argument(0), true); // VirtualThread this argument
   IdealKit ideal(this);
 
   Node* _notify_jvmti_addr = makecon(TypeRawPtr::make((address)MountUnmountDisabler::notify_jvmti_events_address()));
@@ -3101,7 +3101,7 @@ bool LibraryCallKit::inline_native_vthread_end_transition(address funcAddr, cons
 
   ideal.if_then(_notify_jvmti, BoolTest::eq, ideal.ConI(1)); {
     sync_kit(ideal);
-    Node* is_mount = is_first_transition ? ideal.ConI(1) : _gvn.transform(argument(1));
+    Node* is_mount = is_first_transition ? ideal.ConI(1) : argument(1);
     const TypeFunc* tf = OptoRuntime::vthread_transition_Type();
     make_runtime_call(RC_NO_LEAF, tf, funcAddr, funcName, TypePtr::BOTTOM, vt_oop, is_mount);
     ideal.sync_kit(this);
@@ -3132,7 +3132,7 @@ bool LibraryCallKit::inline_native_notify_jvmti_sync() {
   {
     // unconditionally update the is_disable_suspend bit in current JavaThread
     Node* thread = ideal.thread();
-    Node* arg = _gvn.transform(argument(0)); // argument for notification
+    Node* arg = argument(0); // argument for notification
     Node* addr = basic_plus_adr(top(), thread, in_bytes(JavaThread::is_disable_suspend_offset()));
     const TypePtr *addr_type = _gvn.type(addr)->isa_ptr();
 
