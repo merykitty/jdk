@@ -8085,7 +8085,7 @@ instruct membar_full() %{
   ins_cost(VOLATILE_REF_COST*100);
 
   format %{ "membar_full\n\t"
-            "dmb ish" %}      
+            "dmb ish" %}
   ins_encode %{
     __ block_comment("membar_full");
     __ membar(Assembler::AnyAny);

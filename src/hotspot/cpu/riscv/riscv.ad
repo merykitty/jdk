@@ -8220,7 +8220,7 @@ instruct membar_full_rvtso() %{
   ins_cost(VOLATILE_REF_COST);
 
   format %{ "#@membar_full_rvtso\n\t"
-            "fence a, a"%}
+            "fence rw, rw" %}
 
   ins_encode %{
     __ block_comment("membar_full_rvtso");
@@ -8345,7 +8345,7 @@ instruct membar_full_rvwmo() %{
   ins_cost(VOLATILE_REF_COST);
 
   format %{ "#@membar_full_rvwmo\n\t"
-            "fence a, a"%}
+            "fence rw, rw" %}
 
   ins_encode %{
     __ block_comment("membar_full_rvwmo");
