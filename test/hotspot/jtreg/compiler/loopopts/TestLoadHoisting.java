@@ -56,6 +56,7 @@ public class TestLoadHoisting {
     }
 
     @Test
+    @IR(counts = {IRNode.LOAD_I, "1"}, phase = CompilePhase.ITER_GVN1)
     @IR(failOn = IRNode.LOAD_I)
     private int testFoldLoad1(int v) {
         // The load is hoisted above the loop because it is independent of the store in the loop
@@ -69,6 +70,7 @@ public class TestLoadHoisting {
     }
 
     @Test
+    @IR(counts = {IRNode.LOAD_I, "1"}, phase = CompilePhase.ITER_GVN1)
     @IR(failOn = IRNode.LOAD_I)
     @IR(counts = {IRNode.ALLOC, "1"})
     private B testFoldLoad2(int v) {
@@ -138,6 +140,7 @@ public class TestLoadHoisting {
     }
 
     @Test
+    @IR(counts = {IRNode.LOAD_I, "1"}, phase = CompilePhase.ITER_GVN1)
     @IR(failOn = IRNode.LOAD_I)
     @IR(counts = {IRNode.ALLOC, "1"})
     private int testLoopNest1(int v) {
@@ -158,6 +161,7 @@ public class TestLoadHoisting {
     }
 
     @Test
+    @IR(counts = {IRNode.LOAD_I, "2"}, phase = CompilePhase.ITER_GVN1)
     @IR(counts = {IRNode.LOAD_I, "1"})
     @IR(counts = {IRNode.ALLOC, "2"})
     private int testLoopNest2(int v1, int v2) {
