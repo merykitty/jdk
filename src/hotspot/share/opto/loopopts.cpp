@@ -934,6 +934,13 @@ static void enqueue_cfg_uses(Node* m, Unique_Node_List& wq) {
 // the memory input to the loop entry so that the load can be scheduled outside the loop. This must
 // be called during the computation of the early of ld.
 bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
+  if (ld->req() > MemNode::Address + 1) {
+    // Not applicable for LoadVectorMasked, LoadVectorGather, LoadVectorGatherMasked. Their
+    // memory_size is incorrect and they only appear from the usage of the Vector API. Needs a more
+    // careful consideration.
+    return false;
+  }
+
   AccessAnalyzer access_analyzer(&_igvn, ld);
 
   // In rare cases, the memory input of a load is a MergeMem. This may be problematic because a
