@@ -2359,7 +2359,7 @@ uint LoadNode::match_edge(uint idx) const {
 //
 Node* LoadBNode::Ideal(PhaseGVN* phase, bool can_reshape) {
   Node* mem = in(MemNode::Memory);
-  Node* value = can_see_stored_value_through_membars(mem,phase);
+  Node* value = can_see_stored_value_through_membars(mem, phase);
   if (value != nullptr) {
     Node* narrow = Compile::narrow_value(T_BYTE, value, _type, phase, false);
     if (narrow != value) {
@@ -2372,7 +2372,7 @@ Node* LoadBNode::Ideal(PhaseGVN* phase, bool can_reshape) {
 
 const Type* LoadBNode::Value(PhaseGVN* phase) const {
   Node* mem = in(MemNode::Memory);
-  Node* value = can_see_stored_value_through_membars(mem,phase);
+  Node* value = can_see_stored_value_through_membars(mem, phase);
   if (value != nullptr && value->is_Con() &&
       !value->bottom_type()->higher_equal(_type)) {
     // If the input to the store does not fit with the load's result type,
@@ -2406,7 +2406,7 @@ Node* LoadUBNode::Ideal(PhaseGVN* phase, bool can_reshape) {
 
 const Type* LoadUBNode::Value(PhaseGVN* phase) const {
   Node* mem = in(MemNode::Memory);
-  Node* value = can_see_stored_value_through_membars(mem,phase);
+  Node* value = can_see_stored_value_through_membars(mem, phase);
   if (value != nullptr && value->is_Con() &&
       !value->bottom_type()->higher_equal(_type)) {
     // If the input to the store does not fit with the load's result type,
@@ -2427,7 +2427,7 @@ const Type* LoadUBNode::Value(PhaseGVN* phase) const {
 //
 Node* LoadUSNode::Ideal(PhaseGVN* phase, bool can_reshape) {
   Node* mem = in(MemNode::Memory);
-  Node* value = can_see_stored_value_through_membars(mem,phase);
+  Node* value = can_see_stored_value_through_membars(mem, phase);
   if (value != nullptr) {
     Node* narrow = Compile::narrow_value(T_CHAR, value, _type, phase, false);
     if (narrow != value) {
@@ -2440,7 +2440,7 @@ Node* LoadUSNode::Ideal(PhaseGVN* phase, bool can_reshape) {
 
 const Type* LoadUSNode::Value(PhaseGVN* phase) const {
   Node* mem = in(MemNode::Memory);
-  Node* value = can_see_stored_value_through_membars(mem,phase);
+  Node* value = can_see_stored_value_through_membars(mem, phase);
   if (value != nullptr && value->is_Con() &&
       !value->bottom_type()->higher_equal(_type)) {
     // If the input to the store does not fit with the load's result type,
@@ -2461,7 +2461,7 @@ const Type* LoadUSNode::Value(PhaseGVN* phase) const {
 //
 Node* LoadSNode::Ideal(PhaseGVN* phase, bool can_reshape) {
   Node* mem = in(MemNode::Memory);
-  Node* value = can_see_stored_value_through_membars(mem,phase);
+  Node* value = can_see_stored_value_through_membars(mem, phase);
   if (value != nullptr) {
     Node* narrow = Compile::narrow_value(T_SHORT, value, _type, phase, false);
     if (narrow != value) {
@@ -2474,7 +2474,7 @@ Node* LoadSNode::Ideal(PhaseGVN* phase, bool can_reshape) {
 
 const Type* LoadSNode::Value(PhaseGVN* phase) const {
   Node* mem = in(MemNode::Memory);
-  Node* value = can_see_stored_value_through_membars(mem,phase);
+  Node* value = can_see_stored_value_through_membars(mem, phase);
   if (value != nullptr && value->is_Con() &&
       !value->bottom_type()->higher_equal(_type)) {
     // If the input to the store does not fit with the load's result type,
