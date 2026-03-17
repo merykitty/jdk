@@ -132,7 +132,7 @@ public class TestRemoveStoresAfterPeeling {
     }
 
     @Test
-    private void testStoreNotPeeled(int limit, A a, int v) {
+    private void testStoreNotPeeled1(int limit, A a, int v) {
         for (int i = 1; i < 100; i *= 2) {
             // Cannot elide the store after peeling because it does not dominate the back edge
             if (i >= limit) {
@@ -141,16 +141,37 @@ public class TestRemoveStoresAfterPeeling {
         }
     }
 
-    @Run(test = "testStoreNotPeeled")
+    @Run(test = "testStoreNotPeeled1")
     public void runStoreNotPeeled() {
         A a = new A();
-        testStoreNotPeeled(-1, a, 1);
+        testStoreNotPeeled1(-1, a, 1);
         Asserts.assertEQ(1, a.v);
         a.v = 0;
-        testStoreNotPeeled(50, a, 1);
+        testStoreNotPeeled1(50, a, 1);
         Asserts.assertEQ(1, a.v);
         a.v = 0;
-        testStoreNotPeeled(200, a, 1);
+        testStoreNotPeeled1(200, a, 1);
         Asserts.assertEQ(0, a.v);
+    }
+
+    @Test
+    private void testStoreNotPeeled2(A a1, A a2, int v1, int v2) {
+        for (int i = 1; i < 100; i *= 2) {
+            // Cannot elide the store after peeling because there is an interfering store
+            a2.v = Float.floatToRawIntBits(i * v2);
+            a1.v = v1;
+        }
+    }
+
+    @Run(test = "testStoreNotPeeled2")
+    public void runStoreNotPeel2() {
+        A a1 = new A();
+        A a2 = new A();
+        testStoreNotPeeled2(a1, a2, 1, 1);
+        Asserts.assertEQ(1, a1.v);
+        Asserts.assertEQ(Float.floatToRawIntBits(64), a2.v);
+        a1.v = 0;
+        testStoreNotPeeled2(a1, a1, 1, 1);
+        Asserts.assertEQ(1, a1.v);
     }
 }
