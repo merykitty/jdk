@@ -142,7 +142,7 @@ public class TestRemoveStoresAfterPeeling {
     }
 
     @Run(test = "testStoreNotPeeled1")
-    public void runStoreNotPeeled() {
+    public void runStoreNotPeeled1() {
         A a = new A();
         testStoreNotPeeled1(-1, a, 1);
         Asserts.assertEQ(1, a.v);
