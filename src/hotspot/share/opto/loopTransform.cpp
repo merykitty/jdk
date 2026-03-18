@@ -592,7 +592,7 @@ uint IdealLoopTree::estimate_peeling(PhaseIdealLoop *phase) {
   }
 
   // Walk up dominators to loop _head looking for a store which is executed on every path through
-  // the loop. If the pointer and value inputs are loop-invariants, and there is no intefering
+  // the loop. If the pointer and value inputs are loop-invariants, and there is no interfering
   // store in the loop, then the store can be elided after peeling, giving us a reason to peel.
   for (uint i = 0; i < _body.size(); i++) {
     Node* n = _body.at(i);
@@ -643,7 +643,7 @@ void PhaseIdealLoop::peeled_dom_test_elim(IdealLoopTree* loop, Node_List& old_ne
     } // End of scan tests in loop
   } // End of while (progress)
 
-  // Remove all dominated loop-invariant stores in the loop if there is no intefering store in the
+  // Remove all dominated loop-invariant stores in the loop if there is no interfering store in the
   // loop
   for (uint i = 0; i < loop->_body.size(); i++) {
     Node* n = loop->_body.at(i);
