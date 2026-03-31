@@ -310,7 +310,6 @@ public:
     init_class_id(Class_CastPP);
     verify_type(n->bottom_type(), t);
   }
-  virtual const Type* Value(PhaseGVN* phase) const;
   virtual int Opcode() const;
   virtual uint ideal_reg() const { return Op_RegP; }
 

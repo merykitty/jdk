@@ -413,13 +413,6 @@ Node* CastLLNode::Ideal(PhaseGVN* phase, bool can_reshape) {
   return nullptr;
 }
 
-const Type* CastPPNode::Value(PhaseGVN* phase) const {
-  const Type* in_type = phase->type(in(1));
-  const Type* out_type = ConstraintCastNode::Value(phase);
-  verify_type(in_type, out_type);
-  return out_type;
-}
-
 // CastPPNodes are removed before matching, while alias classes are needed in global code motion.
 // As a result, it is not valid for a CastPPNode to change the oop such that the derived pointers
 // lie in different alias classes with and without the node. For example, a CastPP may not cast an
@@ -443,7 +436,7 @@ void CastPPNode::verify_type(const Type* in_type, const Type* out_type) const {
   if (in_type->isa_aryptr() && out_type->isa_aryptr()) {
     const Type* e1 = in_type->is_aryptr()->elem();
     const Type* e2 = out_type->is_aryptr()->elem();
-    assert(e1->basic_type() == e2->basic_type(), "must be the same primitive arrays or both oop arrays");
+    assert(e1->basic_type() == e2->basic_type(), "must both be arrays of the same primitive type or both be oops arrays");
     return;
   }
 
