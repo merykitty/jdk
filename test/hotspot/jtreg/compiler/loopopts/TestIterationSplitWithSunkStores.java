@@ -62,7 +62,6 @@ public class TestIterationSplitWithSunkStores {
 
     private static void test1(int[] dst, int dstPos) {
         int[] src = new int[4];
-        not_inlined();
         src[0] = new MyInteger(1).v();
         src[1] = 2;
         src[2] = 3;
@@ -92,9 +91,6 @@ public class TestIterationSplitWithSunkStores {
             v3.v = e + 3;
             v4.v = e + 4;
         }
-    }
-
-    private static void not_inlined() {
     }
 
     static class MyInteger {

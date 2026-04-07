@@ -1797,6 +1797,11 @@ Node *PhaseIdealLoop::insert_post_loop(IdealLoopTree* loop, Node_List& old_new,
       //     store will be the entry input of post_phi. Fortunately, the safepoint at the exit of
       //     the outer loop captures all memory states, so we can use it as the entry input of
       //     post_phi.
+      //   Another way to see it is that, the memory phi should capture the latest state at the
+      //   post-loop entry. If loopback_input is cloned by clone_up_backedge_goo, it is pinned at
+      //   the post-loop entry, and is surely the latest state. Otherwise, the latest memory state
+      //   corresponding to post_phi is the memory state at the exit of the outer main-loop, which
+      //   is captured by the safepoint there.
       if (main_head->is_strip_mined() && fallnew == loopback_input && post_phi->is_memory_phi()) {
         SafePointNode* main_safepoint = main_head->outer_safepoint();
         fallnew = main_safepoint->memory();
