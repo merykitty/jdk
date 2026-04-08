@@ -1804,6 +1804,7 @@ Node *PhaseIdealLoop::insert_post_loop(IdealLoopTree* loop, Node_List& old_new,
       //   is captured by the safepoint there.
       if (main_head->is_strip_mined() && fallnew == loopback_input && post_phi->is_memory_phi()) {
         SafePointNode* main_safepoint = main_head->outer_safepoint();
+        assert(main_safepoint != nullptr, "outer loop must have a safepoint");
         fallnew = main_safepoint->memory();
       }
       _igvn.hash_delete(post_phi);
