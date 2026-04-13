@@ -1313,6 +1313,10 @@ bool PhaseIdealLoop::identical_backtoback_ifs(Node *n) {
   if (!n->in(0)->is_Region()) {
     return false;
   }
+  if (n->outcnt() != n->as_If()->required_outcnt()) {
+    assert(false, "malformed IfNode with %d outputs", n->outcnt());
+    return false; // Bail out in product
+  }
 
   Node* region = n->in(0);
   Node* dom = idom(region);
@@ -1433,7 +1437,10 @@ void PhaseIdealLoop::split_if_with_blocks_post(Node *n) {
 
     // Check some safety conditions
     if (iff->is_If()) {        // Classic split-if?
-      if (iff->in(0) != n_ctrl) {
+      if (iff->outcnt() != iff->as_If()->required_outcnt()) {
+        assert(false, "malformed IfNode with %d outputs", iff->outcnt());
+        return; // Bail out in product
+      } else if (iff->in(0) != n_ctrl) {
         return; // Compare must be in same blk as if
       }
     } else if (iff->is_CMove()) { // Trying to split-up a CMOVE
