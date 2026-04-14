@@ -314,7 +314,7 @@ public:
   virtual uint ideal_reg() const { return Op_RegP; }
 
 private:
-  void verify_type(const Type* in_type, const Type* out_type) const;
+  static void verify_type(const Type* in_type, const Type* out_type);
 };
 
 //------------------------------CheckCastPPNode--------------------------------

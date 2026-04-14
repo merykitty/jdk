@@ -415,11 +415,16 @@ Node* CastLLNode::Ideal(PhaseGVN* phase, bool can_reshape) {
 
 // CastPPNodes are removed before matching, while alias classes are needed in global code motion.
 // As a result, it is not valid for a CastPPNode to change the oop such that the derived pointers
-// lie in different alias classes with and without the node. For example, a CastPP may not cast an
-// Object to a Bottom[], because it will change the alias class of p + length_offset.
+// lie in different alias classes with and without the node. For example, a CastPPNode c may not
+// cast an Object to a Bottom[], because later removal of c would affect the alias class of c's
+// array length field (c + arrayOopDesc::length_offset_in_bytes()).
 //
 // This function verifies that a CastPPNode on an oop does not violate the aforementioned property.
-void CastPPNode::verify_type(const Type* in_type, const Type* out_type) const {
+//
+// TODO 8382147: Currently, this verification only applies during the construction of a CastPPNode,
+// we may want to apply the same verification during IGVN transformations, as well as final graph
+// reshaping.
+void CastPPNode::verify_type(const Type* in_type, const Type* out_type) {
 #ifdef ASSERT
   out_type = out_type->join(in_type);
   if (in_type->empty() || out_type->empty()) {
