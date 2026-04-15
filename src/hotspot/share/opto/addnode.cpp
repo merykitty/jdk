@@ -776,7 +776,7 @@ Node *AddPNode::Ideal(PhaseGVN *phase, bool can_reshape) {
         offset  = phase->MakeConX(t2->get_con() + t12->get_con());
       } else {
         // Else move the constant to the right.  ((A+con)+B) into ((A+B)+con)
-        address = phase->transform(new AddPNode(in(Base),addp->in(Address),in(Offset)));
+        address = phase->transform(AddPNode::make_with_base(in(Base), addp->in(Address), in(Offset)));
         offset  = addp->in(Offset);
       }
       set_req_X(Address, address, phase);
@@ -798,11 +798,11 @@ Node *AddPNode::Ideal(PhaseGVN *phase, bool can_reshape) {
   // Convert: (ptr + (offset+con)) into (ptr+offset)+con.
   // The idea is to merge array_base+scaled_index groups together,
   // and only have different constant offsets from the same base.
-  const Node *add = in(Offset);
-  if( add->Opcode() == Op_AddX && add->in(1) != add ) {
-    const Type *t22 = phase->type( add->in(2) );
-    if( t22->singleton() && (t22 != Type::TOP) ) {  // Right input is an add of a constant?
-      set_req(Address, phase->transform(new AddPNode(in(Base),in(Address),add->in(1))));
+  const Node* add = in(Offset);
+  if (add->Opcode() == Op_AddX && add->in(1) != add) {
+    const Type* t22 = phase->type(add->in(2));
+    if (t22->singleton() && (t22 != Type::TOP)) {  // Right input is an add of a constant?
+      set_req(Address, phase->transform(AddPNode::make_with_base(in(Base), in(Address), add->in(1))));
       set_req_X(Offset, add->in(2), phase); // puts add on igvn worklist if needed
       return this;              // Made progress
     }
