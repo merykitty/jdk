@@ -1315,7 +1315,7 @@ bool PhaseIdealLoop::identical_backtoback_ifs(Node *n) {
   }
   if (n->outcnt() != n->as_If()->required_outcnt()) {
     assert(false, "malformed IfNode with %d outputs", n->outcnt());
-    return false; // Bail out in product
+    return false;
   }
 
   Node* region = n->in(0);
@@ -1439,7 +1439,7 @@ void PhaseIdealLoop::split_if_with_blocks_post(Node *n) {
     if (iff->is_If()) {        // Classic split-if?
       if (iff->outcnt() != iff->as_If()->required_outcnt()) {
         assert(false, "malformed IfNode with %d outputs", iff->outcnt());
-        return; // Bail out in product
+        return;
       } else if (iff->in(0) != n_ctrl) {
         return; // Compare must be in same blk as if
       }
