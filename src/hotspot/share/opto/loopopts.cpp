@@ -1307,14 +1307,17 @@ Node* PhaseIdealLoop::place_outside_loop(Node* useblock, IdealLoopTree* loop) co
 
 
 bool PhaseIdealLoop::identical_backtoback_ifs(Node *n) {
-  if (!n->is_If() || n->is_BaseCountedLoopEnd()) {
-    return false;
-  }
-  if (!n->in(0)->is_Region()) {
+  if (!n->is_If()) {
     return false;
   }
   if (n->outcnt() != n->as_If()->required_outcnt()) {
     assert(false, "malformed IfNode with %d outputs", n->outcnt());
+    return false;
+  }
+  if (n->is_BaseCountedLoopEnd()) {
+    return false;
+  }
+  if (!n->in(0)->is_Region()) {
     return false;
   }
 
