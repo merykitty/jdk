@@ -30,7 +30,7 @@ import java.util.concurrent.*;
 import jdk.internal.misc.Unsafe;
 import org.openjdk.jmh.annotations.*;
 
-// Credit: https://gist.github.com/Spasi/eed94bd2228e637464c32786a52fbd0d
+// Credit: https://gist.github.com/Spasi/eed94bd2228e637464c32786a52fbd0d, contributed on panama-dev
 
 @State(Scope.Benchmark)
 @Fork(value = 1, jvmArgs = { "--enable-native-access=ALL-UNNAMED", "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED" })
