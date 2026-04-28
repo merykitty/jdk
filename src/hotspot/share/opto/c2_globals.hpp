@@ -507,8 +507,12 @@
   /* controls for heat-based inlining */                                    \
                                                                             \
   develop(intx, NodeCountInliningCutoff, 18000,                             \
-          "If parser node generation exceeds limit stop inlining")          \
+          "If node count exceeds limit stop inlining")                      \
           range(0, max_jint)                                                \
+                                                                            \
+  product(bool, DelayAfterInliningCutoff, true, DIAGNOSTIC,                 \
+          "If node count exceeds limit during parsing, attempt inlining "   \
+          "later instead of giving up completely")                          \
                                                                             \
   product(intx, MaxNodeLimit, 80000,                                        \
           "Maximum number of nodes")                                        \
@@ -800,7 +804,7 @@
   product(bool, IncrementalInlineForceCleanup, false, DIAGNOSTIC,           \
           "do cleanup after every iteration of incremental inlining")       \
                                                                             \
-  product(intx, LiveNodeCountInliningCutoff, 20000,                         \
+  product(intx, LiveNodeCountInliningCutoff, 40000,                         \
           "max number of live nodes in a method")                           \
           range(0, max_juint / 8)                                           \
                                                                             \

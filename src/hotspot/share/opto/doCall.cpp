@@ -551,8 +551,8 @@ void Parse::do_call() {
 
   // Bump max node limit for JSR292 users
   if (bc() == Bytecodes::_invokedynamic || orig_callee->is_method_handle_intrinsic()) {
-    C->set_max_node_limit(3 * MaxNodeLimit);
-    C->set_live_node_count_inlining_cutoff(2 * LiveNodeCountInliningCutoff);
+    C->set_max_node_limit(3*MaxNodeLimit);
+    C->set_node_count_inlining_cutoff(LiveNodeCountInliningCutoff);
   }
 
   // uncommon-trap when callee is unloaded, uninitialized or will not link
