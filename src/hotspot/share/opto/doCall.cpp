@@ -34,7 +34,6 @@
 #include "logging/logMessage.hpp"
 #include "logging/logStream.hpp"
 #include "opto/addnode.hpp"
-#include "opto/c2_globals.hpp"
 #include "opto/callGenerator.hpp"
 #include "opto/castnode.hpp"
 #include "opto/cfgnode.hpp"
