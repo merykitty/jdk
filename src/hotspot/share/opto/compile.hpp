@@ -1007,6 +1007,7 @@ public:
            should_delay_boxing_inlining(call_method, jvms) ||
            should_delay_vector_inlining(call_method, jvms);
   }
+  bool should_delay_after_inlining_cutoff(ciMethod* callee, ciMethod* caller);
   bool should_delay_string_inlining(ciMethod* call_method, JVMState* jvms);
   bool should_delay_boxing_inlining(ciMethod* call_method, JVMState* jvms);
   bool should_delay_vector_inlining(ciMethod* call_method, JVMState* jvms);
