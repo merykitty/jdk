@@ -31,7 +31,6 @@
 #include "interpreter/linkResolver.hpp"
 #include "jfr/jfrEvents.hpp"
 #include "oops/objArrayKlass.hpp"
-#include "opto/c2_globals.hpp"
 #include "opto/callGenerator.hpp"
 #include "opto/parse.hpp"
 #include "runtime/handles.inline.hpp"
@@ -357,6 +356,22 @@ bool InlineTree::is_not_reached(ciMethod* callee_method, ciMethod* caller_method
   return true; // give up and treat the call site as not reached
 }
 
+// After Compile::over_inlining_cutoff, should we decline inlining the callee, or should we try
+// inlining again later
+static bool should_give_up_after_inlining_cutoff(ciMethod* callee) {
+  if (!IncrementalInline) {
+    return true;
+  }
+
+  if (DelayAfterInliningCutoff) {
+    return false;
+  } else if (callee->force_inline() || callee->is_compiled_lambda_form()) {
+    return false;
+  } else {
+    return true;
+  }
+}
+
 //-----------------------------try_to_inline-----------------------------------
 // return true if ok
 // Relocated from "InliningClosure::try_to_inline"
@@ -398,15 +413,7 @@ bool InlineTree::try_to_inline(ciMethod* callee_method, ciMethod* caller_method,
     // conservative threshold, and resume during incremental inlining, when there is no more
     // parsing in the caller, and node liveness is more easily determined.
     if (C->over_inlining_cutoff()) {
-      bool give_up = true;
-      if (IncrementalInline) {
-        if (DelayAfterInliningCutoff) {
-          give_up = false;
-        } else if (callee_method->force_inline() || caller_method->is_compiled_lambda_form()) {
-          give_up = false;
-        }
-      }
-      if (give_up) {
+      if (should_give_up_after_inlining_cutoff(callee_method)) {
         set_msg("NodeCountInliningCutoff");
         return false;
       } else {
