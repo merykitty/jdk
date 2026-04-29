@@ -35,8 +35,12 @@ import compiler.lib.ir_framework.*;
 public class TestDelayAfterInliningCutoff {
     public static void main(String[] args) {
         var framework = new TestFramework();
-        framework.addScenarios(new Scenario(0, "-XX:+UnlockDiagnosticVMOptions", "-XX:+DelayAfterInliningCutoff"));
-        framework.addScenarios(new Scenario(1, "-XX:+UnlockDiagnosticVMOptions", "-XX:-DelayAfterInliningCutoff"));
+        framework.setDefaultWarmup(1);
+        framework.addFlags("-XX:+UnlockDiagnosticVMOptions");
+        // Workaround the issue with incorrect call count at call sites
+        framework.addFlags("-XX:MinInlineFrequencyRatio=0");
+        framework.addScenarios(new Scenario(0, "-XX:+DelayAfterInliningCutoff"));
+        framework.addScenarios(new Scenario(1, "-XX:-DelayAfterInliningCutoff"));
         framework.start();
     }
 
