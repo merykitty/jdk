@@ -722,7 +722,7 @@ bool LibraryCallKit::try_to_inline(int predicate) {
   case vmIntrinsics::_minD_strict:
   case vmIntrinsics::_maxD_strict:
     return inline_min_max(intrinsic_id());
-  
+
   case vmIntrinsics::_addInt128TLo:
   case vmIntrinsics::_addInt128THi:
   case vmIntrinsics::_subInt128TLo:
