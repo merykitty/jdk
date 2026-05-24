@@ -489,6 +489,12 @@ private:
   // changes happen far away.
   bool needs_deep_revisit(const Node* n) const;
 
+  void split_memory_phis();
+  MergeMemNode* try_push_mergemems_down_through_phi(PhiNode* phi, const VectorSet* excluded_idx);
+  void clean_up_memory_phis();
+  bool try_kill_dead_memory_phi(PhiNode* phi, Unique_Node_List& worklist);
+  bool try_replace_identical_memory_phi(PhiNode* phi1, PhiNode* phi2, Unique_Node_List& worklist, Node_Array& node_map);
+
   // Subsume users of node 'old' into node 'nn'
   void subsume_node( Node *old, Node *nn );
 
@@ -543,7 +549,7 @@ public:
   void verify_Value_for(const Node* n, bool strict = false);
   void verify_Ideal_for(Node* n, bool can_reshape, bool deep_revisit_converged);
   void verify_Identity_for(Node* n);
-  void verify_node_invariants_for(const Node* n);
+  void verify_node_invariants_for(const Node* n, bool is_live_cfg);
   void verify_empty_worklist(Node* n);
 #endif
 
