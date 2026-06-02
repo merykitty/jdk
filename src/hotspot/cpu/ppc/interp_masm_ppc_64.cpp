@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2003, 2025, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2025 SAP SE. All rights reserved.
+ * Copyright (c) 2003, 2026, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2026 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1340,28 +1340,15 @@ void InterpreterMacroAssembler::profile_final_call(Register scratch1, Register s
 // Count a virtual call in the bytecodes.
 void InterpreterMacroAssembler::profile_virtual_call(Register Rreceiver,
                                                      Register Rscratch1,
-                                                     Register Rscratch2,
-                                                     bool receiver_can_be_null) {
+                                                     Register Rscratch2) {
   if (!ProfileInterpreter) { return; }
   Label profile_continue;
 
   // If no method data exists, go to profile_continue.
   test_method_data_pointer(profile_continue);
 
-  Label skip_receiver_profile;
-  if (receiver_can_be_null) {
-    Label not_null;
-    cmpdi(CR0, Rreceiver, 0);
-    bne(CR0, not_null);
-    // We are making a call. Increment the count for null receiver.
-    increment_mdp_data_at(in_bytes(CounterData::count_offset()), Rscratch1, Rscratch2);
-    b(skip_receiver_profile);
-    bind(not_null);
-  }
-
   // Record the receiver type.
   record_klass_in_profile(Rreceiver, Rscratch1, Rscratch2);
-  bind(skip_receiver_profile);
 
   // The method data pointer needs to be updated to reflect the new target.
   update_mdp_by_constant(in_bytes(VirtualCallData::virtual_call_data_size()));
@@ -2358,12 +2345,20 @@ void InterpreterMacroAssembler::notify_method_exit(bool is_native_method, TosSta
   // entry/exit events are sent for that thread to track stack
   // depth. If it is possible to enter interp_only_mode we add
   // the code to check if the event should be sent.
-  if (mode == NotifyJVMTI && JvmtiExport::can_post_interpreter_events()) {
+  if (mode == NotifyJVMTI && (JvmtiExport::can_post_interpreter_events() || JvmtiExport::can_post_frame_pop())) {
     Label jvmti_post_done;
 
-    lwz(R0, in_bytes(JavaThread::interp_only_mode_offset()), R16_thread);
-    cmpwi(CR0, R0, 0);
+    // if (thread->jvmti_thread_state() == nullptr) exit;
+    ld(R11_scratch1, in_bytes(JavaThread::jvmti_thread_state_offset()), R16_thread);
+    cmpdi(CR0, R11_scratch1, 0);
     beq(CR0, jvmti_post_done);
+
+    // if (interp_only_mode() == false && frame_pop_cnt() == 0) exit;
+    lwz(R12_scratch2, in_bytes(JavaThread::interp_only_mode_offset()), R16_thread);
+    lwz(R11_scratch1, in_bytes(JvmtiThreadState::frame_pop_cnt_offset()), R11_scratch1);
+    or_(R0, R11_scratch1, R12_scratch2);
+    beq(CR0, jvmti_post_done);
+
     if (!is_native_method) { push(state); } // Expose tos to GC.
     call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::post_method_exit), check_exceptions);
     if (!is_native_method) { pop(state); }
