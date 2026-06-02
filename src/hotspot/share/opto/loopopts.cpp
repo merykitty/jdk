@@ -941,25 +941,6 @@ bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
     return false;
   }
 
-  AccessAnalyzer access_analyzer(&_igvn, ld);
-
-  // In rare cases, the memory input of a load is a MergeMem. This may be problematic because a
-  // MergeMem does not produce memory, so there may be no memory Phi for the loop the MergeMem is
-  // in that corresponds to ld. As a result, when the memory input is a MergeMem, replace it with
-  // the input corresponding to the load.
-  if (ld->in(MemNode::Memory)->is_MergeMem()) {
-    AccessAnalyzer::AccessIndependence access_independence = access_analyzer.detect_access_independence(ld->in(MemNode::Memory));
-    if (!access_independence.independent) {
-      // Some strange accesses
-      return false;
-    }
-
-    assert(access_independence.mem != nullptr, "must have a proper memory input");
-    assert(!access_independence.mem->is_MergeMem(), "connected MergeMems should have collapsed");
-    assert(has_node(access_independence.mem), "a non-phi node must not be scheduled before its inputs");
-    _igvn.replace_input_of(ld, MemNode::Memory, access_independence.mem);
-  }
-
   Node* early = get_early_ctrl(ld);
   IdealLoopTree* loop_early = get_loop(early);
 
@@ -1027,6 +1008,7 @@ bool PhaseIdealLoop::try_move_load_before_loops(LoadNode* ld) {
   // iteration, collect all memory nodes corresponding to ld in the loop, and if all of them is
   // provably decided to not interfere with ld, we can hoist ld above the current loop, and
   // continue processing its parent.
+  AccessAnalyzer access_analyzer(&_igvn, ld);
   for (IdealLoopTree* current_loop = loop_early; loop_limit->is_member(current_loop); current_loop = current_loop->_parent) {
 
     // Skip OuterStripMinedLoop, they don't have loop phis, and hoisting a load above the inner
