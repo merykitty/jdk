@@ -3477,7 +3477,7 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
     // (if control is set already) on memory operations. Some CastPP
     // nodes don't have a control (don't carry a dependency): skip
     // those.
-    n->as_CastPP()->verify_type();
+    DEBUG_ONLY(n->as_CastPP()->verify_type());
     if (n->in(0) != nullptr) {
       ResourceMark rm;
       Unique_Node_List wq;
