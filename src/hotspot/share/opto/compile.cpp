@@ -3489,13 +3489,15 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
             use->ensure_control_or_add_prec(n->in(0));
           } else {
             switch(use->Opcode()) {
-            case Op_AddP:
-            case Op_DecodeN:
-            case Op_DecodeNKlass:
-            case Op_CheckCastPP:
-            case Op_CastPP:
-              wq.push(use);
-              break;
+              case Op_AddP:
+              case Op_DecodeN:
+              case Op_DecodeNKlass:
+              case Op_CheckCastPP:
+              case Op_CastPP:
+              case Op_CMoveP:
+              case Op_CMoveN:
+                wq.push(use);
+                break;
             }
           }
         }
