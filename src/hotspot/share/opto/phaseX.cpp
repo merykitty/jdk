@@ -2244,11 +2244,8 @@ Node *PhaseIterGVN::transform_old(Node* n) {
 
   // Apply the Ideal call in a loop until it no longer applies
   Node* k = n;
-#ifdef ASSERT
-  dead_loop_check(k);
-  bool is_new = (k->outcnt() == 0);
-  const Type* old_bottom_type = n->bottom_type();
-#endif // ASSERT
+  DEBUG_ONLY(dead_loop_check(k);)
+  DEBUG_ONLY(bool is_new = (k->outcnt() == 0);)
   C->remove_modified_node(k);
 #ifndef PRODUCT
   uint hash_before = is_verify_Ideal_return() ? k->hash() : 0;
