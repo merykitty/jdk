@@ -3481,25 +3481,76 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
       ResourceMark rm;
       Unique_Node_List wq;
       wq.push(n);
+
+
+      // When we remove a CastPP, we need to pin all of its transitive users under the control of
+      // the removed node. The simplest approach is to pin all of the uses of the removed CastPP,
+      // but it is overly conservative, as an AddP does not really need pinning. As a result, we
+      // look through those nodes that do not need pinning and only pin memory access nodes under
+      // n->in(0).
       for (uint next = 0; next < wq.size(); ++next) {
         Node *m = wq.at(next);
         for (DUIterator_Fast imax, i = m->fast_outs(imax); i < imax; i++) {
           Node* use = m->fast_out(i);
-          if (use->is_Mem() || use->is_EncodeNarrowPtr()) {
+          int use_op = use->Opcode();
+
+          // Stop if use is pinned at its control (e.g. CFG nodes)
+          if (use->is_CFG() || use->pinned()) {
+            continue;
+          }
+
+          // Pure computations
+          if (use->is_Cmp() || use->Opcode() == Op_CastP2X) {
+            continue;
+          }
+
+          if (use->is_EncodeNarrowPtr()) {
+            // EncodeP remembers the fact that its input is not null, so it must be pinned
             use->ensure_control_or_add_prec(n->in(0));
-          } else {
-            switch(use->Opcode()) {
-              case Op_AddP:
-              case Op_DecodeN:
-              case Op_DecodeNKlass:
-              case Op_CheckCastPP:
-              case Op_CastPP:
-              case Op_CMoveP:
-              case Op_CMoveN:
-                wq.push(use);
+            continue;
+          }
+
+          bool is_mem_access = use->is_Mem();
+          if (!is_mem_access) {
+            switch (use_op) {
+              case Op_PartialSubtypeCheck:
+              case Op_StrComp:
+              case Op_StrEquals:
+              case Op_StrIndexOf:
+              case Op_StrIndexOfChar:
+              case Op_StrCompressedCopy:
+              case Op_StrInflatedCopy:
+              case Op_AryEq:
+              case Op_CountPositives:
+              case Op_VectorizedHashCode:
+              case Op_EncodeISOArray:
+                is_mem_access = true;
                 break;
             }
           }
+
+          if (is_mem_access) {
+            use->ensure_control_or_add_prec(n->in(0));
+            continue;
+          }
+
+#ifdef ASSERT
+          // Look through use to find memory accesses if use is not a memory access
+          switch (use_op) {
+            case Op_AddP:
+            case Op_CheckCastPP:
+            case Op_CastPP:
+            case Op_CMoveP:
+            case Op_CMoveN:
+            case Op_DecodeN:
+            case Op_DecodeNKlass:
+              break;
+            default:
+              assert(false, "unexpected use %s", use->Name());
+          }
+#endif // ASSERT
+
+          wq.push(use);
         }
       }
     }
