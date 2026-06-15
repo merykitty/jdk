@@ -3535,7 +3535,8 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
           }
 
 #ifdef ASSERT
-          // Verify that no unexpected kind of nodes appears here
+          // The only nodes we look through are the ones listed below. Any other node should have
+          // been handled above. Verify that no unexpected kind of nodes appears here.
           switch (use_op) {
             case Op_AddP:
             case Op_CheckCastPP:
