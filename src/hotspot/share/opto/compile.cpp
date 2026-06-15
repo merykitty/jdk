@@ -3535,7 +3535,7 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
           }
 
 #ifdef ASSERT
-          // Look through use to find memory accesses if use is not a memory access
+          // Verify that no unexpected kind of nodes appears here
           switch (use_op) {
             case Op_AddP:
             case Op_CheckCastPP:
@@ -3550,6 +3550,7 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
           }
 #endif // ASSERT
 
+          // Look through use to find memory accesses if use does not need pinning
           wq.push(use);
         }
       }
