@@ -578,7 +578,7 @@ public:
       //   max_carry[i - 1] = (min_bit < 0)
       // }
       //
-      // Since st1._bits._ones[i], (~st2._bits._ones)[i], max_carry[i] can only be 0 or 1,
+      // Since st1._bits._ones[i], (~st2._bits._zeros)[i], max_carry[i] can only be 0 or 1,
       // min_bit < 0 if and only if either:
       // + st1._bits._ones[i] == 0 && (~st2._bits._zeros)[i] == 1
       // + st1._bits._ones[i] == (~st2._bits._zeros)[i] && ((min_bit & 1) == 1)
