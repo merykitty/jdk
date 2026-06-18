@@ -3494,24 +3494,7 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
           Node* use = m->fast_out(i);
           int use_op = use->Opcode();
 
-          // Stop if use is pinned at its control (e.g. CFG nodes)
-          if (use->is_CFG() || use->pinned()) {
-            continue;
-          }
-
-          // Pure computations
-          if (use->is_Cmp() || use->Opcode() == Op_CastP2X) {
-            continue;
-          }
-
-          if (use->is_EncodeNarrowPtr()) {
-            // EncodeP remembers the fact that its input is not null, so it must be pinned
-            use->ensure_control_or_add_prec(n->in(0));
-            continue;
-          }
-
-          bool is_mem_access = use->is_Mem();
-          if (!is_mem_access) {
+          auto has_implicit_mem_access = [](int use_op) {
             switch (use_op) {
               case Op_PartialSubtypeCheck:
               case Op_StrComp:
@@ -3524,35 +3507,28 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
               case Op_CountPositives:
               case Op_VectorizedHashCode:
               case Op_EncodeISOArray:
-                is_mem_access = true;
-                break;
+                return true;
+              default:
+                return false;
             }
-          }
+          };
 
-          if (is_mem_access) {
-            use->ensure_control_or_add_prec(n->in(0));
+          if (use->is_CFG() || use->pinned() ||               // already pinned at the exact control
+              use->is_Cmp() || use->Opcode() == Op_CastP2X) { // pure computations
             continue;
+          } else if (use->is_EncodeNarrowPtr() || // EncodeP remembers whether its input is nullable, so it must be pinned
+                     use->is_Mem() || has_implicit_mem_access(use_op)) {
+            use->ensure_control_or_add_prec(n->in(0));
+          } else {
+            // The only nodes we look through are the ones listed below. Any other node should have
+            // been handled above. Verify that no unexpected kind of nodes appears here.
+            assert(use_op == Op_AddP    ||
+                   use_op == Op_CastPP  || use_op == Op_CheckCastPP ||
+                   use_op == Op_CMoveP  || use_op == Op_CMoveN      ||
+                   use_op == Op_DecodeN || use_op == Op_DecodeNKlass, "unexpected use: %s", use->Name());
+            // Look through use to find memory accesses if use does not need pinning
+            wq.push(use);
           }
-
-#ifdef ASSERT
-          // The only nodes we look through are the ones listed below. Any other node should have
-          // been handled above. Verify that no unexpected kind of nodes appears here.
-          switch (use_op) {
-            case Op_AddP:
-            case Op_CheckCastPP:
-            case Op_CastPP:
-            case Op_CMoveP:
-            case Op_CMoveN:
-            case Op_DecodeN:
-            case Op_DecodeNKlass:
-              break;
-            default:
-              assert(false, "unexpected use %s", use->Name());
-          }
-#endif // ASSERT
-
-          // Look through use to find memory accesses if use does not need pinning
-          wq.push(use);
         }
       }
     }
