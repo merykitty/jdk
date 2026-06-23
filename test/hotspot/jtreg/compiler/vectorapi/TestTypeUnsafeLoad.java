@@ -28,7 +28,7 @@ import jdk.incubator.vector.VectorShuffle;
 
 /*
  * @test
- * @bug 8386503
+ * @bug 8387012
  * @summary Expansion of a VectorUnboxNode should not create a type-unsafe load.
  * @modules jdk.incubator.vector
  * @run main/othervm -XX:+UnlockDiagnosticVMOptions -Xbatch -XX:-TieredCompilation
