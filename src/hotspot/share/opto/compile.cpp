@@ -3493,41 +3493,24 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
         for (DUIterator_Fast imax, i = m->fast_outs(imax); i < imax; i++) {
           Node* use = m->fast_out(i);
           int use_op = use->Opcode();
-
-          auto has_implicit_mem_access = [](int use_op) {
-            switch (use_op) {
-              case Op_PartialSubtypeCheck:
-              case Op_StrComp:
-              case Op_StrEquals:
-              case Op_StrIndexOf:
-              case Op_StrIndexOfChar:
-              case Op_StrCompressedCopy:
-              case Op_StrInflatedCopy:
-              case Op_AryEq:
-              case Op_CountPositives:
-              case Op_VectorizedHashCode:
-              case Op_EncodeISOArray:
-                return true;
-              default:
-                return false;
-            }
-          };
-
           if (use->is_CFG() || use->pinned() ||               // already pinned at the exact control
               use->is_Cmp() || use->Opcode() == Op_CastP2X) { // pure computations
             continue;
-          } else if (use->is_EncodeNarrowPtr() || // EncodeP remembers whether its input is nullable, so it must be pinned
-                     use->is_Mem() || has_implicit_mem_access(use_op)) {
+          } else if (use->is_EncodeNarrowPtr() ||        // EncodeP remembers whether its input is nullable, so it must be pinned
+                     use_op == Op_PartialSubtypeCheck || // This accesses its pointer inputs, so it must depend on them being not-null
+                     use->is_Mem() || use->is_memory_access_intrinsic()) {
             use->ensure_control_or_add_prec(n->in(0));
-          } else {
-            // The only nodes we look through are the ones listed below. Any other node should have
-            // been handled above. Verify that no unexpected kind of nodes appears here.
-            assert(use_op == Op_AddP    ||
-                   use_op == Op_CastPP  || use_op == Op_CheckCastPP ||
-                   use_op == Op_CMoveP  || use_op == Op_CMoveN      ||
-                   use_op == Op_DecodeN || use_op == Op_DecodeNKlass, "unexpected use: %s", use->Name());
+          } else if (use_op == Op_AddP    ||
+                     use_op == Op_CastPP  || use_op == Op_CheckCastPP ||
+                     use_op == Op_CMoveP  || use_op == Op_CMoveN      ||
+                     use_op == Op_DecodeN || use_op == Op_DecodeNKlass) {
             // Look through use to find memory accesses if use does not need pinning
             wq.push(use);
+          } else {
+            // Should have handle all kinds of nodes, verify that we do not unexpectedly reach here
+            assert(false, "unexpected node %s", use->Name());
+            // Be conservative in product and pin the unexpected use
+            use->ensure_control_or_add_prec(n->in(0));
           }
         }
       }
