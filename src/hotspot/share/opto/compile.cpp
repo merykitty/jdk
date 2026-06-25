@@ -3507,7 +3507,8 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
             // Look through use to find memory accesses if use does not need pinning
             wq.push(use);
           } else {
-            // Should have handle all kinds of nodes, verify that we do not unexpectedly reach here
+            // Should have handled all kinds of nodes, verify that we do not unexpectedly arrive
+            // here
             assert(false, "unexpected node %s", use->Name());
             // Be conservative in product and pin the unexpected use
             use->ensure_control_or_add_prec(n->in(0));
