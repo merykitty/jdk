@@ -3491,17 +3491,18 @@ void Compile::final_graph_reshaping_main_switch(Node* n, Final_Reshape_Counts& f
         for (DUIterator_Fast imax, i = m->fast_outs(imax); i < imax; i++) {
           Node* use = m->fast_out(i);
           int use_op = use->Opcode();
-          if (use->is_CFG() || use->pinned() ||               // already pinned at the exact control
-              use->is_Cmp() || use->Opcode() == Op_CastP2X) { // pure computations
+          if (use->is_CFG() || use->pinned() ||                               // already pinned at the exact control
+              use->is_Cmp() || use_op == Op_CastP2X || use_op == Op_Conv2B) { // pure computations
             continue;
           } else if (use->is_EncodeNarrowPtr() ||        // EncodeP remembers whether its input is nullable, so it must be pinned
                      use_op == Op_PartialSubtypeCheck || // This accesses its pointer inputs, so it must depend on them being not-null
                      use->is_Mem() || use->is_memory_access_intrinsic()) {
             use->ensure_control_or_add_prec(n->in(0));
           } else if (use_op == Op_AddP    ||
-                     use_op == Op_CastPP  || use_op == Op_CheckCastPP ||
-                     use_op == Op_CMoveP  || use_op == Op_CMoveN      ||
-                     use_op == Op_DecodeN || use_op == Op_DecodeNKlass) {
+                     use_op == Op_CastPP  || use_op == Op_CheckCastPP  ||
+                     use_op == Op_CMoveP  || use_op == Op_CMoveN       ||
+                     use_op == Op_DecodeN || use_op == Op_DecodeNKlass ||
+                     use_op == Op_VerifyVectorAlignment) {
             // Look through use to find memory accesses if use does not need pinning
             wq.push(use);
           } else {
