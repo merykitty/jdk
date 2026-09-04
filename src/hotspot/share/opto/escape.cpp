@@ -1140,6 +1140,13 @@ void ConnectionGraph::updates_after_load_split(Node* data_phi, Node* previous_lo
           if (java_object != nullptr) {
             add_edge(ptnode_adr(base->_idx), java_object);
           }
+          if (base->in(1)->Opcode() == Op_CastPP) {
+            base->dump(3);
+            tty->cr();
+            base->bottom_type()->dump(); tty->cr();
+            base->in(1)->bottom_type()->dump(); tty->cr();
+            base->in(1)->in(1)->bottom_type()->dump(); tty->cr();
+          }
           base = base->in(1);
           assert(base->Opcode() != Op_CastPP, "Only one CastPP expected");
         }
