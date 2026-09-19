@@ -3038,16 +3038,28 @@ bool Node::is_data_proj_of_pure_function(const Node* maybe_pure_function) const 
 // equal intrinsic. Some nodes do access memory but do not have a memory input, such as
 // PartialSubTypeCheck, they are not included here.
 bool Node::is_memory_access_intrinsic() const {
+  return is_memory_load_intrinsic() || is_memory_store_intrinsic();
+}
+
+bool Node::is_memory_load_intrinsic() const {
   switch (Opcode()) {
     case Op_StrComp:
     case Op_StrEquals:
     case Op_StrIndexOf:
     case Op_StrIndexOfChar:
-    case Op_StrCompressedCopy:
-    case Op_StrInflatedCopy:
     case Op_AryEq:
     case Op_CountPositives:
     case Op_VectorizedHashCode:
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool Node::is_memory_store_intrinsic() const {
+  switch (Opcode()) {
+    case Op_StrCompressedCopy:
+    case Op_StrInflatedCopy:
     case Op_EncodeISOArray:
       return true;
     default:

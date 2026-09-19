@@ -6757,12 +6757,22 @@ Node *PhaseIdealLoop::get_late_ctrl( Node *n, Node *early ) {
   }
 #endif
 
-  if (n->is_Load() && LCA != early) {
-    LCA = get_late_ctrl_with_anti_dep(n->as_Load(), early, LCA);
+  if (needs_anti_dependence_check(n) && LCA != early) {
+    LCA = get_late_ctrl_with_anti_dep(n, early, LCA);
   }
 
   assert(LCA == find_non_split_ctrl(LCA), "unexpected late control");
   return LCA;
+}
+
+// Whether PhaseIdealLoop needs to compute anti-dependencies of n.
+// Stores and LoadStores do not need computing anti-dependencies because they kill their memory
+// input.
+// Memory store intrinsics do not need computing anti-dependencies because their anti-dependencies
+// are materialized as def-use dependencies during graph construction (see
+// GraphKit::memory_effect).
+bool PhaseIdealLoop::needs_anti_dependence_check(const Node* n) {
+  return n->is_Load() || n->is_memory_load_intrinsic();
 }
 
 // if this is a load, check for anti-dependent stores
@@ -6771,12 +6781,13 @@ Node *PhaseIdealLoop::get_late_ctrl( Node *n, Node *early ) {
 // input of this load are examined.  Any use which is not a load and is
 // dominated by early is considered a potentially interfering store.
 // This can produce false positives.
-Node* PhaseIdealLoop::get_late_ctrl_with_anti_dep(LoadNode* n, Node* early, Node* LCA) {
+Node* PhaseIdealLoop::get_late_ctrl_with_anti_dep(Node* n, Node* early, Node* LCA) {
   int load_alias_idx = C->get_alias_index(n->adr_type());
   if (C->alias_type(load_alias_idx)->is_rewritable()) {
     Unique_Node_List worklist;
 
     Node* mem = n->in(MemNode::Memory);
+    assert(mem->bottom_type() == Type::MEMORY, "must be a memory node");
     for (DUIterator_Fast imax, i = mem->fast_outs(imax); i < imax; i++) {
       Node* s = mem->fast_out(i);
       worklist.push(s);
