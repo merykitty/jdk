@@ -253,7 +253,7 @@ private:
       assert(!lookup_res.exist(), "must not exist");
       size_t insert_point = lookup_res.idx();
       assert(insert_point < new_table_size, "unexpected insert point %zu out-of-bound %zu", insert_point, new_table_size);
-      assert(new_metadata[insert_point] == Marker::_empty_marker, "must be empty but %u", new_metadata[insert_point]);
+      assert(new_metadata[insert_point] == Marker::_empty_marker, "must be empty but %u", uint32_t(new_metadata[insert_point]));
       uint64_t h2 = hash & _h2_mask;
       new_metadata[insert_point] = Marker(h2);
       ::new(&new_table[insert_point]) Entry(entry);
