@@ -191,7 +191,7 @@ private:
         insert_point = idx;
       }
 
-      if (cur_marker == h2 && TOKEN_HASH_MATCH(token, hash, table[idx])) {
+      if (cur_marker == Marker(h2) && TOKEN_HASH_MATCH(token, hash, table[idx])) {
         return LookupResult(true, idx);
       }
     }
@@ -355,7 +355,7 @@ public:
 template <class Entry, class Allocator>
 class PDSwissTableImpl {
 private:
-  using Marker = SwissTableImpl<Entry, Allocator>::Marker;
+  using Marker = typename SwissTableImpl<Entry, Allocator>::Marker;
 
 public:
   static double default_load_factor() {
