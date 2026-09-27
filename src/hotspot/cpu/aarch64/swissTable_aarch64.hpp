@@ -26,7 +26,6 @@
 #define CPU_AARCH64_SWISSTABLE_AARCH64_HPP
 
 #include "cppstdlib/limits.hpp"
-#include "runtime/vm_version.hpp"
 #include "utilities/compilerWarnings.hpp"
 #include "utilities/swissTable.hpp"
 
