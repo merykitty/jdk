@@ -116,9 +116,10 @@ class ReturnNode : public Node {
 public:
   ReturnNode(uint edges, Node* cntrl, Node* i_o, Node* memory, Node* frameptr, Node* retadr);
   virtual int Opcode() const;
-  virtual bool  is_CFG() const { return true; }
+  virtual bool is_CFG() const { return true; }
   virtual uint hash() const { return NO_HASH; }  // CFG nodes do not hash
-  virtual Node *Ideal(PhaseGVN *phase, bool can_reshape);
+  virtual const TypePtr* adr_type() const { return TypePtr::BOTTOM; }
+  virtual Node* Ideal(PhaseGVN* phase, bool can_reshape);
   virtual const Type* Value(PhaseGVN* phase) const;
   virtual uint ideal_reg() const { return NotAMachineReg; }
   virtual uint match_edge(uint idx) const;
@@ -136,9 +137,10 @@ class RethrowNode : public Node {
  public:
   RethrowNode( Node *cntrl, Node *i_o, Node *memory, Node *frameptr, Node *ret_adr, Node *exception );
   virtual int Opcode() const;
-  virtual bool  is_CFG() const { return true; }
+  virtual bool is_CFG() const { return true; }
   virtual uint hash() const { return NO_HASH; }  // CFG nodes do not hash
-  virtual Node *Ideal(PhaseGVN *phase, bool can_reshape);
+  virtual const TypePtr* adr_type() const { return TypePtr::BOTTOM; }
+  virtual Node* Ideal(PhaseGVN* phase, bool can_reshape);
   virtual const Type* Value(PhaseGVN* phase) const;
   virtual uint match_edge(uint idx) const;
   virtual uint ideal_reg() const { return NotAMachineReg; }

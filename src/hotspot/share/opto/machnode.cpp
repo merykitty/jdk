@@ -28,8 +28,10 @@
 #include "memory/universe.hpp"
 #include "oops/compressedOops.hpp"
 #include "opto/machnode.hpp"
+#include "opto/opcodes.hpp"
 #include "opto/output.hpp"
 #include "opto/regalloc.hpp"
+#include "utilities/ostream.hpp"
 #include "utilities/vmError.hpp"
 
 //=============================================================================
@@ -343,13 +345,35 @@ const Node* MachNode::get_base_and_disp(intptr_t &offset, const TypePtr* &adr_ty
   return base;
 }
 
+const TypePtr* MachNode::adr_type() const {
+  const TypePtr* computed_adr_type = compute_adr_type_from_inputs();
+  verify_adr_type(computed_adr_type);
+  return _adr_type != nullptr ? _adr_type : computed_adr_type;
+}
 
-//---------------------------------adr_type---------------------------------
-const class TypePtr *MachNode::adr_type() const {
+void MachNode::verify_adr_type(const TypePtr* verify) const {
+#ifdef ASSERT
+  if (_adr_type == nullptr || verify == nullptr) {
+    return;
+  }
+
+  if (_adr_type != verify && _adr_type->cast_to_ptr_type(TypePtr::BotPTR) != verify) {
+    stringStream ss;
+    verify->dump_on(&ss); ss.cr();
+    _adr_type->dump_on(&ss); ss.cr();
+    tty->print_cr("%s", ss.as_string());
+    assert(false, "adr_type may be incorrect");
+  }
+#endif // ASSERT
+}
+
+// Fall-back computation for nodes that miss _adr_type assignments due to post-match expansion,
+// seen on PPC
+const TypePtr* MachNode::compute_adr_type_from_inputs() const {
   intptr_t offset = 0;
-  const TypePtr *adr_type = TYPE_PTR_SENTINAL;  // attempt computing adr_type
-  const Node *base = get_base_and_disp(offset, adr_type);
-  if( adr_type != TYPE_PTR_SENTINAL ) {
+  const TypePtr* adr_type = TYPE_PTR_SENTINAL;
+  const Node* base = get_base_and_disp(offset, adr_type);
+  if (adr_type != TYPE_PTR_SENTINAL) {
     return adr_type;      // get_base_and_disp has the answer
   }
 
@@ -701,12 +725,6 @@ const RegMask &MachReturnNode::in_RegMask( uint idx ) const {
   return _in_rms[idx];
 }
 
-const TypePtr *MachReturnNode::adr_type() const {
-  // most returns and calls are assumed to consume & modify all of memory
-  // the matcher will copy non-wide adr_types from ideal originals
-  return _adr_type;
-}
-
 //=============================================================================
 const Type *MachSafePointNode::bottom_type() const {  return TypeTuple::MEMBAR; }
 
@@ -892,13 +910,6 @@ JVMState jvms_for_throw(0);
 JVMState *MachHaltNode::jvms() const {
   return &jvms_for_throw;
 }
-
-uint MachMemBarNode::size_of() const { return sizeof(*this); }
-
-const TypePtr *MachMemBarNode::adr_type() const {
-  return _adr_type;
-}
-
 
 //=============================================================================
 #ifndef PRODUCT

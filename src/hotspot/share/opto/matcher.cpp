@@ -1073,9 +1073,6 @@ Node *Matcher::xform( Node *n, int max_stack ) {
             m = n->is_SafePoint() ? match_sfpt(n->as_SafePoint()):match_tree(n);
             if (C->failing())  return nullptr;
             if (m == nullptr) { Matcher::soft_match_failure(); return nullptr; }
-            if (n->is_MemBar()) {
-              m->as_MachMemBar()->set_adr_type(n->adr_type());
-            }
           } else {                  // Nothing the matcher cares about
             if (n->is_Proj() && n->in(0) != nullptr && n->in(0)->is_Multi()) {       // Projections?
               if (n->in(0)->is_Initialize() && n->as_Proj()->_con == TypeFunc::Memory) {
@@ -1275,9 +1272,6 @@ MachNode *Matcher::match_sfpt( SafePointNode *sfpt ) {
     cnt = TypeFunc::Parms;
   }
   msfpt->_has_ea_local_in_scope = sfpt->has_ea_local_in_scope();
-
-  // Advertise the correct memory effects (for anti-dependence computation).
-  msfpt->set_adr_type(sfpt->adr_type());
 
   // Allocate a private array of RegMasks.  These RegMasks are not shared.
   msfpt->_in_rms = NEW_RESOURCE_ARRAY( RegMask, cnt );
@@ -1854,6 +1848,16 @@ void Matcher::handle_precedence_edges(Node* n, MachNode *mach) {
   }
 }
 
+void Matcher::combine_adr_type(Node* n, MachNode* mach) {
+  // Merge the adr_type of all nodes in the subtree into the adr_type of 'mach'
+  if (const TypePtr* leaf_adr_type = n->adr_type(); leaf_adr_type != nullptr) {
+    // Only support a single adr_type, even if there are multiple nodes that consume memory, they
+    // must consume the same memory
+    assert(mach->_adr_type == nullptr || mach->_adr_type == leaf_adr_type, "inconsistent adr_type in a subtree");
+    mach->_adr_type = leaf_adr_type;
+  }
+}
+
 void Matcher::ReduceInst_Chain_Rule(State* s, int rule, Node* &mem, MachNode* mach) {
   // 'op' is what I am expecting to receive
   int op = _leftOp[rule];
@@ -1886,8 +1890,9 @@ void Matcher::ReduceInst_Chain_Rule(State* s, int rule, Node* &mem, MachNode* ma
 }
 
 
-uint Matcher::ReduceInst_Interior( State *s, int rule, Node *&mem, MachNode *mach, uint num_opnds ) {
+uint Matcher::ReduceInst_Interior(State* s, int rule, Node*& mem, MachNode* mach, uint num_opnds) {
   handle_precedence_edges(s->_leaf, mach);
+  combine_adr_type(s->_leaf, mach);
 
   if( s->_leaf->is_Load() ) {
     Node *mem2 = s->_leaf->in(MemNode::Memory);
@@ -1973,6 +1978,7 @@ void Matcher::ReduceOper( State *s, int rule, Node *&mem, MachNode *mach ) {
   }
 
   handle_precedence_edges(s->_leaf, mach);
+  combine_adr_type(s->_leaf, mach);
 
   if( s->_leaf->in(0) && s->_leaf->req() > 1) {
     if( !mach->in(0) )
