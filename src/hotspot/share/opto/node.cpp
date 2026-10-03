@@ -981,7 +981,7 @@ Node* Node::uncast(bool keep_deps) const {
 }
 
 // Find out of current node that matches opcode.
-Node* Node::find_out_with(int opcode) {
+Node* Node::find_out_with(int opcode) const {
   for (DUIterator_Fast imax, i = fast_outs(imax); i < imax; i++) {
     Node* use = fast_out(i);
     if (use->Opcode() == opcode) {
@@ -992,12 +992,12 @@ Node* Node::find_out_with(int opcode) {
 }
 
 // Return true if the current node has an out that matches opcode.
-bool Node::has_out_with(int opcode) {
+bool Node::has_out_with(int opcode) const {
   return (find_out_with(opcode) != nullptr);
 }
 
 // Return true if the current node has an out that matches any of the opcodes.
-bool Node::has_out_with(int opcode1, int opcode2, int opcode3, int opcode4) {
+bool Node::has_out_with(int opcode1, int opcode2, int opcode3, int opcode4) const {
   for (DUIterator_Fast imax, i = fast_outs(imax); i < imax; i++) {
       int opcode = fast_out(i)->Opcode();
       if (opcode == opcode1 || opcode == opcode2 || opcode == opcode3 || opcode == opcode4) {
@@ -1144,6 +1144,51 @@ void Node::raise_bottom_type(const Type* new_type) {
     }
     n->set_type(new_type);
   }
+}
+
+const TypePtr* Node::out_adr_type() const {
+  const TypePtr* res = out_adr_type_impl();
+
+#ifdef ASSERT
+  // Verify that in_adr_type contains out_adr_type, except for Start, obviously it consumes nothing
+  if (is_Start()) {
+    return res;
+  }
+
+  const TypePtr* in_type = in_adr_type_impl();
+  // For some reasons, Raw can be used as Bot (see GraphKit::set_output_for_allocation for
+  // example), so be lenient here
+  if (res != nullptr && in_type != TypePtr::BOTTOM && in_type != TypeRawPtr::BOTTOM && res != in_type) {
+    stringStream ss;
+    ss.print(", out: ");
+    res->dump_on(&ss);
+    ss.print(", in: ");
+    if (in_type == nullptr) {
+      ss.print("nullptr");
+    } else {
+      in_type->dump_on(&ss);
+    }
+    assert(false, "Node %s: in_adr_type must contain out_adr_type%s", Name(), ss.as_string());
+  }
+
+  // Unless this node is pinned, we must either have no out_adr_type or have the same out_adr_type
+  // and in_adr_type. This is because we DO NOT know how to compute the anti-dependence of any
+  // other node. The exceptions are the intrinsic nodes which are constructed specially to
+  // materialize anti-dependencies as def-use dependencies.
+  bool has_special_anti_dependence_construction = Opcode() == Op_StrCompressedCopy ||
+                                                  Opcode() == Op_StrInflatedCopy ||
+                                                  Opcode() == Op_EncodeISOArray;
+  if (!is_Mach() && !is_CFG() && !pinned() && res != nullptr && res != in_type && !has_special_anti_dependence_construction) {
+    stringStream ss;
+    ss.print(", out: ");
+    res->dump_on(&ss);
+    ss.print(", in: ");
+    in_type->dump_on(&ss);
+    assert(false, "Node %s: cannot compute anti-dependencies%s", Name(), ss.as_string());
+  }
+#endif // ASSERT
+
+  return res;
 }
 
 //------------------------------Identity---------------------------------------
@@ -2630,7 +2675,7 @@ void Node::dump(const char* suffix, bool mark, outputStream* st, DumpConfig* dc)
     t->dump_on(st);
   } else if (t == Type::MEMORY) {
     st->print("  Memory:");
-    MemNode::dump_adr_type(adr_type(), st);
+    MemNode::dump_adr_type(out_adr_type(), st);
   } else if (Verbose || WizardMode) {
     st->print("  Type:");
     if (t) {
