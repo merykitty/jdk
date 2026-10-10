@@ -1577,7 +1577,7 @@ private:
 //------------------------------TypeInstPtr------------------------------------
 // Class of Java object pointers, pointing either to non-array Java instances
 // or to a Klass* (including array klasses).
-class TypeInstPtr : public TypeOopPtr {
+class TypeInstPtr final : public TypeOopPtr {
   // Can this instance be in a flat array?
   FlatInArray _flat_in_array;
 
@@ -1665,8 +1665,8 @@ public:
   virtual const TypePtr* with_inline_depth(int depth) const;
   virtual const TypePtr* with_instance_id(int instance_id) const;
 
-  virtual const TypeInstPtr* cast_to_flat_in_array() const;
-  virtual const TypeInstPtr* cast_to_maybe_flat_in_array() const;
+  const TypeInstPtr* cast_to_flat_in_array() const;
+  const TypeInstPtr* cast_to_maybe_flat_in_array() const;
   virtual FlatInArray flat_in_array() const { return _flat_in_array; }
 
   // the core of the computation of the meet of 2 types
@@ -1688,7 +1688,7 @@ public:
 #endif
 
 private:
-  virtual bool is_meet_same_type_as(const TypePtr* other) const {
+  bool is_meet_same_type_as(const TypePtr* other) const {
     return _klass->equals(other->is_instptr()->_klass) && _interfaces->eq(other->is_instptr()->_interfaces);
   }
 
@@ -1696,7 +1696,7 @@ private:
 
 //------------------------------TypeAryPtr-------------------------------------
 // Class of Java array pointers
-class TypeAryPtr : public TypeOopPtr {
+class TypeAryPtr final : public TypeOopPtr {
   friend class Type;
   friend class TypePtr;
   friend class TypeInstPtr;
@@ -1721,6 +1721,8 @@ class TypeAryPtr : public TypeOopPtr {
       _is_ptr_to_narrowoop = true;
     }
 
+    static_assert(std::is_final_v<TypeAryPtr>, "higher_equal can only be called on fully constructed instances");
+    assert(speculative == nullptr || speculative->higher_equal(this), "speculative must be a subset of the static type");
   }
   virtual bool eq( const Type *t ) const;
   virtual uint hash() const;    // Type specific hashing
@@ -1786,8 +1788,8 @@ public:
 
   virtual const TypeAryPtr* cast_to_instance_id(int instance_id) const;
 
-  virtual const TypeAryPtr* cast_to_size(const TypeInt* size) const;
-  virtual const TypeInt* narrow_size_type(const TypeInt* size) const;
+  const TypeAryPtr* cast_to_size(const TypeInt* size) const;
+  const TypeInt* narrow_size_type(const TypeInt* size) const;
 
   virtual bool empty(void) const;        // TRUE if type is vacuous
   virtual const TypePtr *add_offset( intptr_t offset ) const;
@@ -1805,10 +1807,10 @@ public:
   virtual const Type* xjoin_helper(const Type* t) const;
 
   // Value type array properties
-  const TypeAryPtr* cast_to_flat(bool flat) const;
-  const TypeAryPtr* cast_to_not_flat(bool not_flat = true) const;
-  const TypeAryPtr* cast_to_null_free(bool null_free) const;
-  const TypeAryPtr* cast_to_not_null_free(bool not_null_free = true) const;
+  const TypeAryPtr* cast_to_flat() const;
+  const TypeAryPtr* cast_to_not_flat() const;
+  const TypeAryPtr* cast_to_null_free() const;
+  const TypeAryPtr* cast_to_not_null_free() const;
   const TypeAryPtr* update_properties(const TypeAryPtr* new_type) const;
   jint flat_layout_helper() const;
   int flat_elem_size() const;
@@ -1826,6 +1828,7 @@ public:
   const Offset field_offset() const { return _field_offset; }
   const TypeAryPtr* with_field_offset(int offset) const;
   const TypePtr* add_field_offset_and_offset(intptr_t offset) const;
+  const TypeAryPtr* with_field_offset_speculative(intptr_t offset) const;
 
   virtual bool can_be_value_type() const { return false; }
   virtual const TypeKlassPtr* as_klass_type(bool try_for_exact = false) const;
@@ -1834,17 +1837,21 @@ public:
 
   // Convenience common pre-built types.
   static const TypeAryPtr* BOTTOM;
-  static const TypeAryPtr *RANGE;
-  static const TypeAryPtr *OOPS;
-  static const TypeAryPtr *NARROWOOPS;
-  static const TypeAryPtr *BYTES;
-  static const TypeAryPtr *SHORTS;
-  static const TypeAryPtr *CHARS;
-  static const TypeAryPtr *INTS;
-  static const TypeAryPtr *LONGS;
-  static const TypeAryPtr *FLOATS;
-  static const TypeAryPtr *DOUBLES;
-  static const TypeAryPtr *INLINES;
+  static const TypeAryPtr* RANGE;
+  static const TypeAryPtr* OOPS;
+  static const TypeAryPtr* NARROWOOPS;
+  static const TypeAryPtr* BYTES;
+  static const TypeAryPtr* SHORTS;
+  static const TypeAryPtr* CHARS;
+  static const TypeAryPtr* INTS;
+  static const TypeAryPtr* LONGS;
+  static const TypeAryPtr* FLOATS;
+  static const TypeAryPtr* DOUBLES;
+  static const TypeAryPtr* INLINES;
+  static const TypeAryPtr* REFERENCES;
+  static const TypeAryPtr* NULL_FREES;
+  static const TypeAryPtr* NULLABLES;
+
   // selects one of the above:
   static const TypeAryPtr *get_array_body_type(BasicType elem) {
     assert((uint)elem <= T_CONFLICT && _array_body_type[elem] != nullptr, "bad elem type");
