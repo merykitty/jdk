@@ -4017,7 +4017,7 @@ const TypeOopPtr* TypeOopPtr::make_from_klass_common(ciKlass *klass, bool klass_
         }
       }
       if (!klass_is_exact && try_for_exact && deps != nullptr &&
-          !ik->is_interface() && !ik->has_subklass()) {
+          !ik->is_interface() && !ik->is_abstract() && !ik->has_subklass()) {
         // Add a dependence; if concrete subclass added we need to recompile
         deps->assert_leaf_type(ik);
         klass_is_exact = true;
