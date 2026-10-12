@@ -2070,6 +2070,14 @@ Node *PhaseIterGVN::transform_old(Node* n) {
   if (i && (i != k)) {
     // Return the pre-existing node if it isn't dead
     set_progress();
+
+    // i may have an outdated Type
+    if (type(i) != t) {
+      assert(i->Value(this) == t, "inconsistent Value");
+      set_type(i, t);
+      add_users_to_worklist(i);
+    }
+
     add_users_to_worklist(k);
     subsume_node(k, i);       // Everybody using k now uses i
     return i;
