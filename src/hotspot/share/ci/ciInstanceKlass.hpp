@@ -55,7 +55,6 @@ private:
   InstanceKlass::ClassState _init_state;           // state of class
   bool                   _is_shared;
   bool                   _has_finalizer;
-  SubklassValue          _has_subklass;
   bool                   _has_nonstatic_fields;
   bool                   _has_nonstatic_concrete_methods;
   bool                   _is_hidden;
@@ -64,10 +63,8 @@ private:
   bool                   _has_trusted_loader;
 
   ciFlags                _flags;
-
-  // Lazy fields get filled in only upon request.
   ciInstanceKlass*       _super;
-  ciInstance*            _java_mirror;
+  ciInstance*            _java_mirror;  // Lazy fields get filled in only upon request.
 
   ciConstantPoolCache*   _field_cache;  // cached map index->field
 
@@ -84,20 +81,41 @@ private:
   // JavaFieldStream order).
   const GrowableArray<ciField*>* _nonstatic_fields;
 
-  int                    _has_injected_fields; // any non static injected fields? lazily initialized.
-
-  // The possible values of the _implementor fall into following three cases:
-  //   null: no implementor.
-  //   A ciInstanceKlass that's not itself: one implementor.
-  //   Itself: more than one implementor.
-  ciInstanceKlass*       _implementor;
+  int _has_injected_fields; // any non static injected fields? lazily initialized.
   GrowableArray<ciInstanceKlass*>* _transitive_interfaces;
+
+  // CHA related fields need to be cached so that the compiler has a consistent view of the class
+  // hierarchy. The first concern is that multiple calls on the same ciInstanceKlass should return
+  // the same value. Otherwise, different nodes may have different types even if their declared
+  // types in the classfile are the same. The second concern is that the value should be consistent
+  // with the state of other ciInstanceKlasses. For example, the view is inconsistent if a
+  // ciInstanceKlass says that it has no subklass, but there is another ciInstanceKlass which says
+  // that it has the former as its super. Another example is if a ciInstanceKlass says that it has
+  // a unique concrete subklass, but there are multiple concrete ciInstanceKlasses inherit it.
+  // Inconsistency is dangerous as it is easy for the compiler to get strange failures.
+  // Since they need to be consistent, these fields can only be computed after parsing (and
+  // inlining) has finished, and we do not encounter more code.
+  bool _cha_info_computed;
+
+  // Whether this ciInstanceKlass has a proper subklass (a subklass that is not itself) that is not
+  // an interface
+  SubklassValue _has_subklass;
+
+  // _implementor is the result of trying to find the LCA of all concrete subklasses of a class or
+  // interface. The possible values fall into following 2 cases:
+  //   == nullptr: no concrete subklass (including itself)
+  //   != nullptr: each concrete subklass of this must be a subklass of this value
+  ciInstanceKlass* _implementor;
 
   void compute_injected_fields();
   bool compute_injected_fields_helper();
-  void compute_transitive_interfaces();
+  GrowableArray<ciInstanceKlass*>* compute_transitive_interfaces(Arena* arena, InstanceKlass* ik);
 
   ciField* get_nonstatic_field_by_offset(int field_offset);
+
+  void compute_cha_info();
+  bool check_cha_consistency(InstanceKlass* ik);
+  void update_cha_info_upon_creation();
 
 protected:
   ciInstanceKlass(Klass* k);
@@ -166,20 +184,6 @@ public:
   bool                   has_finalizer()  {
     assert(is_loaded(), "must be loaded");
     return _has_finalizer; }
-  bool                   has_subklass()   {
-    assert(is_loaded(), "must be loaded");
-    // Ignore cached subklass_false case.
-    // It could be invalidated by concurrent class loading and
-    // can result in type paradoxes during compilation when
-    // a subclass is observed, but has_subklass() returns false.
-    if (_has_subklass == subklass_true) {
-      return true;
-    }
-    if (flags().is_final()) {
-      return false;
-    }
-    return compute_shared_has_subklass();
-  }
 
   jint                   layout_helper_size_in_bytes()  {
     return Klass::layout_helper_size_in_bytes(layout_helper());
@@ -190,20 +194,13 @@ public:
   }
   jint                   has_nonstatic_fields()  {
     assert(is_loaded(), "must be loaded");
-    return _has_nonstatic_fields; }
-  ciInstanceKlass*       super();
-  jint                   nof_implementors() {
-    ciInstanceKlass* impl;
-    assert(is_loaded(), "must be loaded");
-    impl = implementor();
-    if (impl == nullptr) {
-      return 0;
-    } else if (impl != this) {
-      return 1;
-    } else {
-      return 2;
-    }
+    return _has_nonstatic_fields;
   }
+
+  ciInstanceKlass*       super() const {
+    return _super;
+  }
+
   bool has_nonstatic_concrete_methods()  {
     assert(is_loaded(), "must be loaded");
     return _has_nonstatic_concrete_methods;
@@ -269,7 +266,6 @@ public:
   int number_of_nonoop_entries_in_acmp_map() const;
   AcmpMapSegment get_nonoop_segment_of_acmp_map(int i) const;
 
-  ciInstanceKlass* unique_concrete_subklass();
   bool has_finalizable_subclass();
 
   bool has_class_initializer();
@@ -291,16 +287,6 @@ public:
   ciMethod* find_method(ciSymbol* name, ciSymbol* signature);
   // Note:  To find a method from name and type strings, use ciSymbol::make,
   // but consider adding to vmSymbols.hpp instead.
-
-  bool is_leaf_type();
-  ciInstanceKlass* implementor();
-
-  ciInstanceKlass* unique_implementor() {
-    assert(is_loaded(), "must be loaded");
-    assert(is_interface(), "must be");
-    ciInstanceKlass* impl = implementor();
-    return (impl != this ? impl : nullptr);
-  }
 
   virtual bool can_be_value_klass(bool is_exact = false);
 
@@ -337,7 +323,30 @@ public:
   bool has_trusted_loader() const {
     return _has_trusted_loader;
   }
+
   GrowableArray<ciInstanceKlass*>* transitive_interfaces() const;
+
+  // CHA related methods
+  // These methods are pessimistic, they ensure the consistency in the compiler's view of the class
+  // hierarchy (e.g. if a klass says that it has no subklass, no ciKlass can be created as its
+  // child). These methods can be used for static type inference such as general type information
+  // of the nodes the graph. Class loading is still racy, but these methods ensure the compiler can
+  // work properly without encountering strange issues. Assumption violation will invalidate the
+  // compiled method, but it only happens after the compilation has finished.
+  bool has_subklass_checked();
+  ciInstanceKlass* unique_concrete_subklass_checked();
+  ciInstanceKlass* unique_implementor_checked();
+
+  // These methods are optimistic, they don't care about the raciness with the class loading
+  // mechanism and can result in inconsistencies. These methods can be used for speculative type
+  // inference that does not affect the relationship of different nodes in the graph such as when
+  // optimizing a subtype check. It is generally unsafe to optimize the type information of a node
+  // using the unchecked methods because when IGVN replaces it with another node in the graph, the
+  // consistency can be exposed.
+  bool has_subklass_unchecked();
+  bool is_leaf_type_unchecked();
+  ciInstanceKlass* unique_concrete_subklass_unchecked();
+  ciInstanceKlass* unique_implementor_unchecked();
 
   // Replay support
 

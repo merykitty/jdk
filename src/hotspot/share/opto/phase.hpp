@@ -25,6 +25,7 @@
 #ifndef SHARE_OPTO_PHASE_HPP
 #define SHARE_OPTO_PHASE_HPP
 
+#include "memory/allocation.hpp"
 #include "runtime/timer.hpp"
 
 class IfNode;
@@ -48,6 +49,7 @@ public:
     Parser,                           // Parse bytecodes
     Remove_Useless,                   // Remove useless nodes
     Remove_Useless_And_Renumber_Live, // First, remove useless nodes from the graph. Then, renumber live nodes.
+    Class_Hierarchy_Analysis,         // Use CHA to tighten the Type of Nodes in the graph
     Optimistic,                       // Optimistic analysis phase
     GVN,                              // Pessimistic global value numbering phase
     Ins_Select,                       // Instruction selection phase

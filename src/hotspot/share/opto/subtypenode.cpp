@@ -41,7 +41,7 @@ const Type* SubTypeCheckNode::sub(const Type* sub_t, const Type* super_t) const 
   if (sub_t->isa_oopptr() && super_klass_type->isa_instklassptr() && super_klass_type->klass_is_exact()) {
     ciKlass* superklass = super_klass_type->exact_klass();
     if (!superklass->is_interface() && superklass->is_abstract() &&
-        !superklass->as_instance_klass()->has_subklass()) {
+        !superklass->as_instance_klass()->has_subklass_unchecked()) {
       Compile::current()->dependencies()->assert_leaf_type(superklass);
       return TypeInt::CC_GT;
     }

@@ -25,6 +25,7 @@
 #ifndef SHARE_OPTO_TYPE_HPP
 #define SHARE_OPTO_TYPE_HPP
 
+#include "ci/ciInstanceKlass.hpp"
 #include "ci/ciValueKlass.hpp"
 #include "opto/adlcVMDeps.hpp"
 #include "opto/compile.hpp"
@@ -1182,6 +1183,7 @@ public:
 
   bool singleton(void) const;
   bool has_non_array_interface() const;
+  void collect(GrowableArray<ciInstanceKlass*>& dst) const;
 };
 
 //------------------------------TypePtr----------------------------------------

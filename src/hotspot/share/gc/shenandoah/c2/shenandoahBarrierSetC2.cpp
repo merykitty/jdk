@@ -547,7 +547,7 @@ bool ShenandoahBarrierSetC2::clone_needs_barrier(const TypeOopPtr* src_type, boo
   if (src_type->isa_instptr() != nullptr) {
     // Instance: need barrier only if there is a possibility of having an oop anywhere in it.
     ciInstanceKlass* ik = src_type->is_instptr()->instance_klass();
-    if ((src_type->klass_is_exact() || !ik->has_subklass()) &&
+    if ((src_type->klass_is_exact() || !ik->has_subklass_unchecked()) &&
         !ik->has_injected_fields() && !ik->has_object_fields()) {
       if (!src_type->klass_is_exact()) {
         // Class is *currently* the leaf in the hierarchy.

@@ -1613,7 +1613,7 @@ void GraphBuilder::call_register_finalizer() {
     ciInstanceKlass* ik = compilation()->method()->holder();
     if (ik->is_final()) {
       exact_type = ik;
-    } else if (UseCHA && !(ik->has_subklass() || ik->is_interface())) {
+    } else if (UseCHA && !(ik->has_subklass_unchecked() || ik->is_interface())) {
       // test class is leaf class
       compilation()->dependency_recorder()->assert_leaf_type(ik);
       exact_type = ik;
@@ -2337,7 +2337,7 @@ void GraphBuilder::invoke(Bytecodes::Code code) {
         if (type != nullptr && type->is_loaded() &&
             type->is_instance_klass() && !type->as_instance_klass()->is_interface()) {
           receiver_klass = (ciInstanceKlass*) type;
-          if (receiver_klass->is_leaf_type() && !receiver_klass->is_final()) {
+          if (receiver_klass->is_leaf_type_unchecked() && !receiver_klass->is_final()) {
             // Insert a dependency on this type since
             // find_monomorphic_target may assume it's already done.
             dependency_recorder()->assert_leaf_type(receiver_klass);
@@ -2383,7 +2383,7 @@ void GraphBuilder::invoke(Bytecodes::Code code) {
       // it's 0 then no class implements decl_interface and there's
       // no point in inlining.
       ciInstanceKlass* declared_interface = callee_holder;
-      ciInstanceKlass* singleton = declared_interface->unique_implementor();
+      ciInstanceKlass* singleton = declared_interface->unique_implementor_unchecked();
       if (singleton != nullptr) {
         assert(singleton != declared_interface, "not a unique implementor");
         cha_monomorphic_target = target->find_monomorphic_target(calling_klass, declared_interface, singleton);
@@ -2563,7 +2563,7 @@ bool GraphBuilder::direct_compare(ciKlass* k) {
     if (ik->is_final()) {
       return true;
     } else {
-      if (UseCHA && !(ik->has_subklass() || ik->is_interface())) {
+      if (UseCHA && !(ik->has_subklass_unchecked() || ik->is_interface())) {
         // test class is leaf class
         dependency_recorder()->assert_leaf_type(ik);
         return true;

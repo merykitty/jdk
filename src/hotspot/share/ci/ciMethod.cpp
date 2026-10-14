@@ -767,7 +767,7 @@ ciMethod* ciMethod::find_monomorphic_target(ciInstanceKlass* caller,
     return root_m;
   }
 
-  if (actual_recv->is_leaf_type() && actual_recv == root_m->holder()) {
+  if (actual_recv->is_leaf_type_unchecked() && actual_recv == root_m->holder()) {
     // Easy case.  There is no other place to put a method, so don't bother
     // to go through the VM_ENTRY_MARK and all the rest.
     if (root_m->is_abstract()) {

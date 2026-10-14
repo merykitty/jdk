@@ -129,7 +129,7 @@ int ArrayCopyNode::get_count(PhaseGVN *phase) const {
       // ciInstanceKlass::nof_nonstatic_fields() doesn't take injected
       // fields into account. They are rare anyway so easier to simply
       // skip instances with injected fields.
-      if ((!inst_src->klass_is_exact() && (ik->is_interface() || ik->has_subklass())) || ik->has_injected_fields()) {
+      if ((!inst_src->klass_is_exact() && (ik->is_interface() || ik->has_subklass_unchecked())) || ik->has_injected_fields()) {
         return -1;
       }
       int nb_fields = ik->nof_nonstatic_fields();
@@ -215,7 +215,7 @@ Node* ArrayCopyNode::try_clone_instance(PhaseGVN *phase, bool can_reshape, int c
 
   if (!inst_src->klass_is_exact()) {
     assert(!ik->is_interface(), "inconsistent klass hierarchy");
-    if (ik->has_subklass()) {
+    if (ik->has_subklass_unchecked()) {
       // Concurrent class loading.
       // Fail fast and return NodeSentinel to indicate that the transform failed.
       return NodeSentinel;

@@ -314,7 +314,6 @@ public:
   virtual int Opcode() const;
   virtual uint ideal_reg() const { return Op_RegP; }
 
-private:
   static void verify_type(const Type* in_type, const Type* out_type);
 };
 

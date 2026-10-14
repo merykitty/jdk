@@ -376,18 +376,6 @@ Node* Parse::prepare_array_addressing(BasicType type, int vals, const Type*& ele
   const TypeInt*    sizetype = arytype->size();
   elemtype = arytype->elem();
 
-  if (UseUniqueSubclasses) {
-    const Type* el = elemtype->make_ptr();
-    if (el && el->isa_instptr()) {
-      const TypeInstPtr* toop = el->is_instptr();
-      if (toop->instance_klass()->unique_concrete_subklass()) {
-        // If we load from "AbstractClass[]" we must see "ConcreteSubClass".
-        const Type* subklass = Type::get_const_type(toop->instance_klass());
-        elemtype = subklass->join_speculative(el);
-      }
-    }
-  }
-
   if (!arytype->is_loaded()) {
     // Only fails for some -Xcomp runs
     // The class is unloaded.  We have to run this bytecode in the interpreter.

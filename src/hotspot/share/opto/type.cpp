@@ -3746,6 +3746,11 @@ bool TypeInterfaces::has_non_array_interface() const {
   return !TypeAryPtr::_array_interfaces->contains(this);
 }
 
+void TypeInterfaces::collect(GrowableArray<ciInstanceKlass*>& dst) const {
+  assert(dst.is_empty(), "should be empty");
+  dst.appendAll(&_interfaces);
+}
+
 //------------------------------TypeOopPtr-------------------------------------
 TypeOopPtr::TypeOopPtr(TYPES t, PTR ptr, ciKlass* k, const TypeInterfaces* interfaces, bool xk, ciObject* o, Offset offset, Offset field_offset,
                        int instance_id, const TypePtr* speculative, int inline_depth)
@@ -3997,32 +4002,9 @@ const Type* TypeOopPtr::xjoin_helper(const Type* t) const {
 //--------------------------make_from_klass_common-----------------------------
 // Computes the element-type given a klass.
 const TypeOopPtr* TypeOopPtr::make_from_klass_common(ciKlass *klass, bool klass_change, bool try_for_exact, InterfaceHandling interface_handling) {
-  if (klass->is_instance_klass() || klass->is_value_klass()) {
-    Compile* C = Compile::current();
-    Dependencies* deps = C->dependencies();
-    assert((deps != nullptr) == (C->method() != nullptr && C->method()->code_size() > 0), "sanity");
-    // Element is an instance
-    bool klass_is_exact = false;
+  if (klass->is_instance_klass()) {
     ciInstanceKlass* ik = klass->as_instance_klass();
-    if (klass->is_loaded()) {
-      // Try to set klass_is_exact.
-      klass_is_exact = ik->is_final();
-      if (!klass_is_exact && klass_change
-          && deps != nullptr && UseUniqueSubclasses) {
-        ciInstanceKlass* sub = ik->unique_concrete_subklass();
-        if (sub != nullptr) {
-          deps->assert_abstract_with_unique_concrete_subtype(ik, sub);
-          klass = ik = sub;
-          klass_is_exact = sub->is_final();
-        }
-      }
-      if (!klass_is_exact && try_for_exact && deps != nullptr &&
-          !ik->is_interface() && !ik->has_subklass()) {
-        // Add a dependence; if concrete subclass added we need to recompile
-        deps->assert_leaf_type(ik);
-        klass_is_exact = true;
-      }
-    }
+    bool klass_is_exact = ik->is_loaded() && ik->is_final();
     FlatInArray flat_in_array = compute_flat_in_array(ik, klass_is_exact);
     const TypeInterfaces* interfaces = TypePtr::interfaces(klass, true, true, false, interface_handling);
     return TypeInstPtr::make(TypePtr::BotPTR, klass, interfaces, klass_is_exact, nullptr, Offset(0), flat_in_array);
@@ -4699,14 +4681,6 @@ const TypeInstPtr *TypeInstPtr::cast_to_maybe_flat_in_array() const {
 const TypeKlassPtr* TypeInstPtr::as_klass_type(bool try_for_exact) const {
   bool xk = klass_is_exact();
   ciInstanceKlass* ik = klass()->as_instance_klass();
-  if (try_for_exact && !xk && !ik->has_subklass() && !ik->is_final()) {
-    if (_interfaces->eq(ik)) {
-      Compile* C = Compile::current();
-      Dependencies* deps = C->dependencies();
-      deps->assert_leaf_type(ik);
-      xk = true;
-    }
-  }
   FlatInArray flat_in_array = compute_flat_in_array_if_unknown(ik, xk, _flat_in_array);
   return TypeInstKlassPtr::make(xk ? TypePtr::Constant : TypePtr::NotNull, klass(), _interfaces, Offset(0), flat_in_array);
 }
@@ -5781,33 +5755,11 @@ const TypeInstKlassPtr* TypeInstKlassPtr::cast_to_exactness(bool klass_is_exact)
 // Corresponding type for an instance of the given class.
 // It will be NotNull, and exact if and only if the klass type is exact.
 const TypeInstPtr* TypeInstKlassPtr::as_exact_instance_type(bool klass_change) const {
-  ciKlass* k = klass();
+  ciInstanceKlass* ik = klass()->as_instance_klass();
   bool xk = klass_is_exact();
-  Compile* C = Compile::current();
-  Dependencies* deps = C->dependencies();
-  assert((deps != nullptr) == (C->method() != nullptr && C->method()->code_size() > 0), "sanity");
-  // Element is an instance
-  bool klass_is_exact = false;
   const TypeInterfaces* interfaces = _interfaces;
-  ciInstanceKlass* ik = k->as_instance_klass();
-  if (k->is_loaded()) {
-    // Try to set klass_is_exact.
-    klass_is_exact = ik->is_final();
-    if (!klass_is_exact && klass_change
-        && deps != nullptr && UseUniqueSubclasses) {
-      ciInstanceKlass* sub = ik->unique_concrete_subklass();
-      if (sub != nullptr) {
-        if (_interfaces->eq(sub)) {
-          deps->assert_abstract_with_unique_concrete_subtype(ik, sub);
-          k = ik = sub;
-          xk = sub->is_final();
-        }
-      }
-    }
-  }
-
   FlatInArray flat_in_array = compute_flat_in_array_if_unknown(ik, xk, _flat_in_array);
-  return TypeInstPtr::make(TypePtr::BotPTR, k, interfaces, xk, nullptr, Offset(0), flat_in_array);
+  return TypeInstPtr::make(TypePtr::BotPTR, ik, interfaces, xk, nullptr, Offset(0), flat_in_array);
 }
 
 const TypeInstPtr* TypeInstKlassPtr::as_subtype_instance_type(bool klass_change) const {
@@ -5980,7 +5932,7 @@ const TypeKlassPtr* TypeInstKlassPtr::try_improve() const {
   if (k->is_loaded()) {
     ciInstanceKlass* ik = k->as_instance_klass();
     if (deps != nullptr) {
-      ciInstanceKlass* sub = ik->unique_concrete_subklass();
+      ciInstanceKlass* sub = ik->unique_concrete_subklass_unchecked();
       if (sub != nullptr) {
         bool improve_to_exact = sub->is_final() && _ptr == NotNull;
         const TypeInstKlassPtr* improved = TypeInstKlassPtr::make(improve_to_exact ? Constant : _ptr, sub, _offset);

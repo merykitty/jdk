@@ -379,7 +379,7 @@ CallGenerator* Compile::call_generator(ciMethod* callee, int vtable_index, bool 
         declared_interface = caller->get_declared_method_holder_at_bci(bci)->as_instance_klass();
       }
       assert(declared_interface->is_interface(), "required");
-      ciInstanceKlass* singleton = declared_interface->unique_implementor();
+      ciInstanceKlass* singleton = declared_interface->unique_implementor_unchecked();
 
       if (singleton != nullptr) {
         assert(singleton != declared_interface, "not a unique implementor");
@@ -1128,7 +1128,6 @@ void Parse::catch_inline_exceptions(SafePointNode* ex_map) {
     if (!stopped()) {
       PreserveJVMState pjvms(this);
       const TypeInstPtr* tinst = TypeOopPtr::make_from_klass_unique(klass)->cast_to_ptr_type(TypePtr::NotNull)->is_instptr();
-      assert(klass->has_subklass() || tinst->klass_is_exact(), "lost exactness");
       Node* ex_oop = _gvn.transform(new CheckCastPPNode(control(), ex_node, tinst));
       if (PrintOpto && WizardMode) {
         tty->print("  Catching inline exception bci:%d -> handler_bci:%d -- ", bci(), handler_bci);

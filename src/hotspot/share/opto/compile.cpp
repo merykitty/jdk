@@ -80,6 +80,7 @@
 #include "opto/output.hpp"
 #include "opto/parse.hpp"
 #include "opto/phaseX.hpp"
+#include "opto/phasecha.hpp"
 #include "opto/reachability.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/runtime.hpp"
@@ -3164,6 +3165,16 @@ void Compile::Optimize() {
   // so keep only the actual candidates for optimizations.
   cleanup_expensive_nodes(igvn);
 
+  // No more type is necessarily loaded by the compiler, perform static CHA
+  {
+    PhaseCHA cha(igvn);
+    cha.do_transform();
+    igvn.optimize();
+    if (failing()) {
+      return;
+    }
+  }
+
   if (failing())  return;
 
   assert(EnableVectorSupport || !has_vbox_nodes(), "sanity");
@@ -5396,7 +5407,7 @@ Compile::SubTypeCheckResult Compile::static_subtype_check(const TypeKlassPtr* su
 
   if (superelem->isa_instklassptr()) {
     ciInstanceKlass* ik = superelem->is_instklassptr()->instance_klass();
-    if (!ik->has_subklass()) {
+    if (!ik->has_subklass_unchecked()) {
       if (!ik->is_final()) {
         // Add a dependency if there is a chance of a later subclass.
         dependencies()->assert_leaf_type(ik);

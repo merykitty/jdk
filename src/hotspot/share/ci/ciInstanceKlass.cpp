@@ -25,15 +25,18 @@
 #include "ci/ciField.hpp"
 #include "ci/ciInstance.hpp"
 #include "ci/ciInstanceKlass.hpp"
+#include "ci/ciUtilities.hpp"
 #include "ci/ciUtilities.inline.hpp"
 #include "ci/ciValueKlass.hpp"
 #include "classfile/javaClasses.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmClasses.hpp"
+#include "compiler/compilerThread.hpp"
 #include "memory/allocation.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/resourceArea.hpp"
 #include "oops/fieldStreams.inline.hpp"
+#include "oops/instanceKlass.hpp"
 #include "oops/instanceKlass.inline.hpp"
 #include "oops/klass.inline.hpp"
 #include "oops/oop.inline.hpp"
@@ -41,6 +44,8 @@
 #include "runtime/fieldDescriptor.inline.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/jniHandles.inline.hpp"
+#include "utilities/growableArray.hpp"
+#include "utilities/macros.hpp"
 
 // ciInstanceKlass
 //
@@ -52,11 +57,8 @@
 // ciInstanceKlass::ciInstanceKlass
 //
 // Loaded instance klass.
-ciInstanceKlass::ciInstanceKlass(Klass* k) :
-  ciKlass(k)
-{
+ciInstanceKlass::ciInstanceKlass(Klass* k) : ciKlass(k) {
   assert(get_Klass()->is_instance_klass(), "wrong type");
-
   InstanceKlass* ik = get_instanceKlass();
 
 #ifdef ASSERT
@@ -65,6 +67,9 @@ ciInstanceKlass::ciInstanceKlass(Klass* k) :
     assert(false, "must be at least loaded: %s", ik->name()->as_C_string());
   }
 #endif // ASSERT
+
+  InstanceKlass* super_k = ik->super();
+  _super = super_k != nullptr ? CURRENT_ENV->get_instance_klass(super_k) : nullptr;
 
   AccessFlags access_flags = ik->access_flags();
   _flags = ciFlags(access_flags);
@@ -79,8 +84,7 @@ ciInstanceKlass::ciInstanceKlass(Klass* k) :
   _nonstatic_fields = nullptr;          // initialized lazily by compute_nonstatic_fields
   _trust_final_fields = ik->trust_final_fields();
   _has_injected_fields = -1;
-  _implementor = nullptr;               // we will fill these lazily
-  _transitive_interfaces = nullptr;
+  _transitive_interfaces = compute_transitive_interfaces(CURRENT_ENV->arena(), ik);;
 
   // Ensure that the metadata wrapped by the ciMetadata is kept alive by GC.
   // This is primarily useful for metadata which is considered as weak roots
@@ -109,19 +113,10 @@ ciInstanceKlass::ciInstanceKlass(Klass* k) :
   }
 
   _has_trusted_loader = compute_has_trusted_loader();
-
-  // Lazy fields get filled in only upon request.
-  _super  = nullptr;
   _java_mirror = nullptr;
-
-  if (is_shared()) {
-    if (k != vmClasses::Object_klass()) {
-      super();
-    }
-    //compute_nonstatic_fields();  // done outside of constructor
-  }
-
   _field_cache = nullptr;
+
+  update_cha_info_upon_creation();
 }
 
 // Version for unloaded classes:
@@ -345,10 +340,9 @@ void ciInstanceKlass::print_impl(outputStream* st) {
   ciKlass::print_impl(st);
   GUARDED_VM_ENTRY(st->print(" loader=" INTPTR_FORMAT, p2i(loader()));)
   if (is_loaded()) {
-    st->print(" initialized=%s finalized=%s subklass=%s size=%d flags=",
+    st->print(" initialized=%s finalized=%s size=%d flags=",
               bool_to_str(is_initialized()),
               bool_to_str(has_finalizer()),
-              bool_to_str(has_subklass()),
               layout_helper());
 
     _flags.print_klass_flags(st);
@@ -364,21 +358,6 @@ void ciInstanceKlass::print_impl(outputStream* st) {
 }
 
 // ------------------------------------------------------------------
-// ciInstanceKlass::super
-//
-// Get the superklass of this klass.
-ciInstanceKlass* ciInstanceKlass::super() {
-  assert(is_loaded(), "must be loaded");
-  if (_super == nullptr && !is_java_lang_Object()) {
-    GUARDED_VM_ENTRY(
-      Klass* super_klass = get_instanceKlass()->super();
-      _super = CURRENT_ENV->get_instance_klass(super_klass);
-    )
-  }
-  return _super;
-}
-
-// ------------------------------------------------------------------
 // ciInstanceKlass::java_mirror
 //
 // Get the instance of java.lang.Class corresponding to this klass.
@@ -391,22 +370,6 @@ ciInstance* ciInstanceKlass::java_mirror() {
     _java_mirror = ciKlass::java_mirror();
   }
   return _java_mirror;
-}
-
-// ------------------------------------------------------------------
-// ciInstanceKlass::unique_concrete_subklass
-ciInstanceKlass* ciInstanceKlass::unique_concrete_subklass() {
-  if (!is_loaded())     return nullptr; // No change if class is not loaded
-  if (!is_abstract())   return nullptr; // Only applies to abstract classes.
-  if (!has_subklass())  return nullptr; // Must have at least one subklass.
-  VM_ENTRY_MARK;
-  InstanceKlass* ik = get_instanceKlass();
-  Klass* up = ik->up_cast_abstract();
-  assert(up->is_instance_klass(), "must be InstanceKlass");
-  if (ik == up) {
-    return nullptr;
-  }
-  return CURRENT_THREAD_ENV->get_instance_klass(up);
 }
 
 // ------------------------------------------------------------------
@@ -774,52 +737,6 @@ ciMethod* ciInstanceKlass::find_method(ciSymbol* name, ciSymbol* signature) {
   return CURRENT_THREAD_ENV->get_method(m);
 }
 
-// ------------------------------------------------------------------
-// ciInstanceKlass::is_leaf_type
-bool ciInstanceKlass::is_leaf_type() {
-  assert(is_loaded(), "must be loaded");
-  if (is_shared()) {
-    return is_final();  // approximately correct
-  } else {
-    return !has_subklass() && (!is_interface() || nof_implementors() == 0);
-  }
-}
-
-// ------------------------------------------------------------------
-// ciInstanceKlass::implementor
-//
-// Report an implementor of this interface.
-// Note that there are various races here, since my copy
-// of _nof_implementors might be out of date with respect
-// to results returned by InstanceKlass::implementor.
-// This is OK, since any dependencies we decide to assert
-// will be checked later under the Compile_lock.
-ciInstanceKlass* ciInstanceKlass::implementor() {
-  assert(is_interface(), "required");
-  ciInstanceKlass* impl = _implementor;
-  if (impl == nullptr) {
-    if (is_shared()) {
-      impl = this; // assume a well-known interface never has a unique implementor
-    } else {
-      // Go into the VM to fetch the implementor.
-      VM_ENTRY_MARK;
-      InstanceKlass* ik = get_instanceKlass();
-      Klass* implk = ik->implementor();
-      if (implk != nullptr) {
-        if (implk == ik) {
-          // More than one implementors. Use 'this' in this case.
-          impl = this;
-        } else {
-          impl = CURRENT_THREAD_ENV->get_instance_klass(implk);
-        }
-      }
-    }
-    // Memoize this result.
-    _implementor = impl;
-  }
-  return impl;
-}
-
 bool ciInstanceKlass::can_be_value_klass(bool is_exact) {
   if (!Arguments::is_valhalla_enabled()) {
     return false;
@@ -1006,30 +923,269 @@ void ciInstanceKlass::dump_replay_instanceKlass(outputStream* out, InstanceKlass
   }
 }
 
-GrowableArray<ciInstanceKlass*>* ciInstanceKlass::transitive_interfaces() const{
-  if (_transitive_interfaces == nullptr) {
-    const_cast<ciInstanceKlass*>(this)->compute_transitive_interfaces();
-  }
+GrowableArray<ciInstanceKlass*>* ciInstanceKlass::transitive_interfaces() const {
   return _transitive_interfaces;
 }
 
-void ciInstanceKlass::compute_transitive_interfaces() {
-  GUARDED_VM_ENTRY(
-          InstanceKlass* ik = get_instanceKlass();
-          Array<InstanceKlass*>* interfaces = ik->transitive_interfaces();
-          int orig_length = interfaces->length();
-          Arena* arena = CURRENT_ENV->arena();
-          int transitive_interfaces_len = orig_length + (is_interface() ? 1 : 0);
-          GrowableArray<ciInstanceKlass*>* transitive_interfaces = new(arena)GrowableArray<ciInstanceKlass*>(arena, transitive_interfaces_len,
-                                                                                                             0, nullptr);
-          for (int i = 0; i < orig_length; i++) {
-            transitive_interfaces->append(CURRENT_ENV->get_instance_klass(interfaces->at(i)));
-          }
-          if (is_interface()) {
-            transitive_interfaces->append(this);
-          }
-          _transitive_interfaces = transitive_interfaces;
-  );
+GrowableArray<ciInstanceKlass*>* ciInstanceKlass::compute_transitive_interfaces(Arena* arena, InstanceKlass* ik) {
+  ASSERT_IN_VM;
+  Array<InstanceKlass*>* interfaces = ik->transitive_interfaces();
+  int orig_length = interfaces->length();
+  int transitive_interfaces_len = orig_length + (ik->is_interface() ? 1 : 0);
+  auto transitive_interfaces = new(arena) GrowableArray<ciInstanceKlass*>(arena, transitive_interfaces_len, 0, nullptr);
+  for (int i = 0; i < orig_length; i++) {
+    transitive_interfaces->append(CURRENT_ENV->get_instance_klass(interfaces->at(i)));
+  }
+  if (ik->is_interface()) {
+    assert(ik == get_instanceKlass(), "cannot find this otherwise");
+    transitive_interfaces->append(this);
+  }
+  return transitive_interfaces;
+}
+
+bool ciInstanceKlass::has_subklass_checked() {
+  assert(is_loaded(), "must be loaded");
+  assert(!is_interface(), "must not be an interface");
+  if (SubklassValue res = _has_subklass; res != subklass_unknown) {
+    return res == subklass_true;
+  }
+
+  compute_cha_info();
+  return _has_subklass == subklass_true;
+}
+
+// For an abstract klass, return _implementor if it is a non-null value other than this, return
+// nullptr otherwise. Semantically, this method tries to find a better LCA of all concrete
+// subklasses of this, and return nullptr if it cannot do so.
+ciInstanceKlass* ciInstanceKlass::unique_concrete_subklass_checked() {
+  assert(is_loaded(), "must be loaded %s", name()->as_utf8());
+  assert(!is_interface(), "must not be an interface %s", name()->as_utf8());
+  if (!is_abstract()) {
+    return nullptr;
+  }
+
+  if (_cha_info_computed) {
+    ciInstanceKlass* res = _implementor;
+    return res == this ? nullptr : res;
+  }
+
+  compute_cha_info();
+  ciInstanceKlass* res = _implementor;
+  return res == this ? nullptr : res;
+}
+
+// The same as unique_concrete_subklass, but for an interface.
+ciInstanceKlass* ciInstanceKlass::unique_implementor_checked() {
+  assert(is_loaded(), "must be loaded");
+  assert(is_interface(), "must be an interface");
+  if (_cha_info_computed) {
+    ciInstanceKlass* res = _implementor;
+    return res == this ? nullptr : res;
+  }
+
+  compute_cha_info();
+  ciInstanceKlass* res = _implementor;
+  return res == this ? nullptr : res;
+}
+
+void ciInstanceKlass::compute_cha_info() {
+  assert(is_loaded(), "must be loaded %s", name()->as_utf8());
+  assert(!is_shared(), "racy operation on %s", name()->as_utf8());
+  assert(!is_final(), "useless computation for %s", name()->as_utf8());
+  assert(_has_subklass == subklass_unknown || _has_subklass == subklass_true,
+         "cannot be false before computation for %s", name()->as_utf8());
+  assert(!_cha_info_computed, "cannot be false before computation for %s", name()->as_utf8());
+  assert(_implementor == nullptr, "must not have been computed yet for %s", name()->as_utf8());
+
+  VM_ENTRY_MARK;
+  InstanceKlass* ik = get_instanceKlass();
+  InstanceKlass* implementor_k;
+  if (is_interface()) {
+    _has_subklass = subklass_true;
+    implementor_k = ik->implementor();
+  } else {
+    SubklassValue computed_has_subklass = ik->subklass() != nullptr ? subklass_true : subklass_false;
+    assert(_has_subklass != subklass_true || computed_has_subklass != subklass_false,
+           "should have loaded a subklass of %s", name()->as_utf8());
+    if (!is_abstract()) {
+      assert(_has_subklass == subklass_unknown, "should not reach here for concrete class %s", name()->as_utf8());
+      _has_subklass = computed_has_subklass;
+      _implementor = this;
+      _cha_info_computed = true;
+      return;
+    }
+
+    if (computed_has_subklass == subklass_false) {
+      _has_subklass = subklass_false;
+      _implementor = nullptr;
+      _cha_info_computed = true;
+      return;
+    }
+
+    _has_subklass = subklass_true;
+    implementor_k = InstanceKlass::cast(ik->up_cast_abstract());
+  }
+
+  if (implementor_k == nullptr) {
+    _implementor = nullptr;
+    _cha_info_computed = true;
+    return;
+  } else if (implementor_k == ik) {
+    _implementor = this;
+    _cha_info_computed = true;
+    return;
+  }
+
+  _implementor = check_cha_consistency(implementor_k) ? CURRENT_ENV->get_instance_klass(implementor_k) : this;
+  _cha_info_computed = true;
+}
+
+// We found an LCA for all concrete subklasses of an abstract klass or interface, check that
+// loading it into the compiler (by creating a ciInstanceKlass) does not create any inconsistency
+bool ciInstanceKlass::check_cha_consistency(InstanceKlass* implementor_k) {
+  assert(!implementor_k->is_interface(), "unique implementor of %s must not be an interface %s",
+                                         name()->as_utf8(), implementor_k->name()->as_utf8());
+  ASSERT_IN_VM;
+  ResourceMark rm;
+  ResourceArea* arena = Thread::current()->resource_area();
+  auto interfaces = compute_transitive_interfaces(arena, implementor_k);
+  for (auto i : *interfaces) {
+    if (!i->_cha_info_computed) {
+      continue;
+    }
+
+    // Some superinterface of implementor_k says that it does not have a concrete implementor
+    if (i->_implementor == nullptr) {
+      return false;
+    }
+
+    // Some superinterface of implementor_k says that all of its concrete implementor subklass
+    // a ciInstanceKlass that is not a superklass of implementor_k
+    if (i->_implementor != i && !implementor_k->is_subclass_of(i->_implementor->get_instanceKlass())) {
+      return false;
+    }
+  }
+
+  // Check for inconsistencies in all super klasses of implementor_k, starting from j.l.O. This
+  // ensures that we do not create paradoxical ciInstanceKlass instances because at all steps, when
+  // a ciInstanceKlass may be created (with CURRENT_ENV->get_instance_klass), we have ensured that
+  // none of its super interfaces and super klasses has computed cha info that is paradoxical.
+  GrowableArray<InstanceKlass*> super_ks;
+  for (InstanceKlass* super_k = implementor_k->super(); super_k != nullptr; super_k = super_k->super()) {
+    super_ks.append(super_k);
+  }
+  for (int i = super_ks.length() - 1; i >= 0; i--) {
+    InstanceKlass* super_k = super_ks.at(i);
+    ciInstanceKlass* super = CURRENT_ENV->get_instance_klass(super_k);
+    if (!super->_cha_info_computed) {
+      continue;
+    }
+
+    if (super->_has_subklass == subklass_false) {
+      return false;
+    }
+
+    if (super->_implementor == nullptr || !implementor_k->is_subclass_of(super->_implementor->get_instanceKlass())) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Initialize CHA related fields for this and notify its super klasses and interfaces about the
+// existence of a subklass, also verify the lack of inconsistencies
+void ciInstanceKlass::update_cha_info_upon_creation() {
+  if (is_final()) {
+    _has_subklass = subklass_false;
+    _cha_info_computed = true;
+    _implementor = this;
+  } else if (is_shared()) {
+    // It will be racy trying to update these fields, so be conservative
+    _has_subklass = subklass_true;
+    _cha_info_computed = true;
+    _implementor = this;
+  } else {
+    _has_subklass = subklass_unknown;
+    _cha_info_computed = false;
+    _implementor = nullptr;
+  }
+
+  auto verify_superklass_or_interface = [&](ciInstanceKlass* s) {
+    assert(s->_has_subklass != subklass_false, "inconsistent _has_subklass field for %s, encountered subklass %s",
+                                               s->name()->as_utf8(), name()->as_utf8());
+    if (s->_has_subklass == subklass_unknown) {
+      assert(!s->is_shared(), "shared instances must have already been initialized to subklass_true %s",
+                              s->name()->as_utf8());
+      s->_has_subklass = subklass_true;
+    }
+
+    bool is_concrete = !is_abstract() && !is_interface();
+    assert(!is_concrete || !s->_cha_info_computed || s->_implementor == s || (s->_implementor != nullptr && this->is_subclass_of(s->_implementor)),
+           "inconsistent _implementor field of %s with field value %s, encountered subklass %s",
+           s->name()->as_utf8(), s->_implementor == nullptr ? "nullptr" : s->_implementor->name()->as_utf8(), name()->as_utf8());
+  };
+
+  for (ciInstanceKlass* s = _super; s != nullptr; s = s->super()) {
+    verify_superklass_or_interface(s);
+  }
+
+  if (!is_interface()) {
+    for (ciInstanceKlass* i : *_transitive_interfaces) {
+      assert(i->is_interface(), "must be an interface");
+      verify_superklass_or_interface(i);
+    }
+  }
+}
+
+bool ciInstanceKlass::has_subklass_unchecked() {
+  assert(is_loaded(), "must be loaded %s", name()->as_utf8());
+  if (is_final()) {
+    return false;
+  }
+
+  VM_ENTRY_MARK;
+  InstanceKlass* ik = get_instanceKlass();
+  return ik->subklass() != nullptr;
+}
+
+// Whether this is klass with no subklass
+bool ciInstanceKlass::is_leaf_type_unchecked() {
+  assert(is_loaded(), "must be loaded %s", name()->as_utf8());
+  assert(!is_interface(), "must not be an interface %s", name()->as_utf8());
+  return !has_subklass_unchecked();
+}
+
+ciInstanceKlass* ciInstanceKlass::unique_concrete_subklass_unchecked() {
+  assert(is_loaded(), "must be loaded %s", name()->as_utf8());
+  assert(!is_interface(), "must not be an interface %s", name()->as_utf8());
+  if (!is_abstract()) {
+    return nullptr;
+  }
+
+  VM_ENTRY_MARK;
+  InstanceKlass* ik = get_instanceKlass();
+  InstanceKlass* implementor_k = InstanceKlass::cast(ik->up_cast_abstract());
+  if (implementor_k == ik || !check_cha_consistency(implementor_k)) {
+    return nullptr;
+  }
+
+  return CURRENT_ENV->get_instance_klass(implementor_k);
+}
+
+ciInstanceKlass* ciInstanceKlass::unique_implementor_unchecked() {
+  assert(is_loaded(), "must be loaded %s", name()->as_utf8());
+  assert(is_interface(), "must be an interface %s", name()->as_utf8());
+
+  VM_ENTRY_MARK;
+  InstanceKlass* ik = get_instanceKlass();
+  InstanceKlass* implementor_k = ik->implementor();
+  if (implementor_k == nullptr || implementor_k == ik ||
+      !check_cha_consistency(implementor_k)) {
+    return nullptr;
+  }
+
+  return CURRENT_ENV->get_instance_klass(implementor_k);
 }
 
 void ciInstanceKlass::dump_replay_data(outputStream* out) {

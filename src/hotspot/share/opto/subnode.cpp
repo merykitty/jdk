@@ -1262,7 +1262,7 @@ Node* CmpPNode::Ideal(PhaseGVN *phase, bool can_reshape) {
   }
   if (superklass->is_instance_klass()) {
     ciInstanceKlass* ik = superklass->as_instance_klass();
-    if (ik->has_subklass() || ik->is_interface())  return nullptr;
+    if (ik->has_subklass_unchecked() || ik->is_interface())  return nullptr;
     // Add a dependency if there is a chance that a subclass will be added later.
     if (!ik->is_final()) {
       phase->C->dependencies()->assert_leaf_type(ik);

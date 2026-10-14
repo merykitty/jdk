@@ -6351,7 +6351,7 @@ bool LibraryCallKit::inline_native_clone(bool is_virtual) {
       if (spec_ik->nof_nonstatic_fields() <= ArrayCopyLoadStoreMaxElem &&
           !spec_ik->has_injected_fields()) {
         if (!obj_type->isa_instptr() ||
-            obj_type->is_instptr()->instance_klass()->has_subklass()) {
+            obj_type->is_instptr()->instance_klass()->has_subklass_unchecked()) {
           obj = maybe_cast_profiled_obj(obj, obj_type->speculative_type(), false);
         }
       }
