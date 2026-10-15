@@ -93,7 +93,7 @@ void PhaseCHA::optimize_node_type(Node* n) {
       call->set_tf(new_call_type);
     }
   } else {
-    const Type* new_type = optimize_inst_oop_type(n->bottom_type()->isa_instptr());
+    const Type* new_type = optimize_inst_oop_type(n->bottom_type());
     if (new_type != nullptr) {
       _igvn.rehash_node_delayed(n);
       n->raise_bottom_type(new_type);
@@ -102,19 +102,26 @@ void PhaseCHA::optimize_node_type(Node* n) {
 }
 
 // Try to optimize a TypeInstPtr to a narrower type with CHA
-const Type* PhaseCHA::optimize_inst_oop_type(const TypeInstPtr* type) {
-  if (type == nullptr || type->klass_is_exact() || type->offset() != 0) {
+const Type* PhaseCHA::optimize_inst_oop_type(const Type* type) {
+  bool is_narrow = type->isa_narrowoop();
+  const TypeOopPtr* oop_type = type->make_oopptr();
+  if (oop_type == nullptr) {
     return nullptr;
   }
 
-  ciInstanceKlass* improved_klass = optimize_instance_klass(type->instance_klass(), type->interfaces());
+  const TypeInstPtr* inst_type = oop_type->isa_instptr();
+  if (inst_type == nullptr || inst_type->klass_is_exact() || inst_type->offset() != 0) {
+    return nullptr;
+  }
+
+  ciInstanceKlass* improved_klass = optimize_instance_klass(inst_type->instance_klass(), inst_type->interfaces());
   if (improved_klass == nullptr) {
     return nullptr;
   }
 
-  const Type* new_type = TypeOopPtr::make_from_klass(improved_klass)->filter(type);
+  const Type* new_type = TypeOopPtr::make_from_klass(improved_klass)->filter(inst_type);
   assert(!new_type->empty(), "cannot degenerate to TOP");
-  return new_type;
+  return is_narrow ? new_type->make_narrowoop() : new_type;
 }
 
 // Try to optimize a TypeTuple if any of its fields can be optimized to a narrower type with CHA
@@ -122,7 +129,7 @@ const TypeTuple* PhaseCHA::optimize_tuple_type(const TypeTuple* type) {
   const Type** new_elems = nullptr;
   for (uint elem_idx = 0; elem_idx < type->cnt(); elem_idx++) {
     const Type* elem = type->field_at(elem_idx);
-    const Type* new_elem = optimize_inst_oop_type(elem->isa_instptr());
+    const Type* new_elem = optimize_inst_oop_type(elem);
     if (new_elem == nullptr) {
       if (new_elems != nullptr) {
         new_elems[elem_idx] = elem;

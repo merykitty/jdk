@@ -47,7 +47,7 @@ public:
 private:
   void optimize_node_type(Node* n);
 
-  const Type* optimize_inst_oop_type(const TypeInstPtr* type);
+  const Type* optimize_inst_oop_type(const Type* type);
   const TypeTuple* optimize_tuple_type(const TypeTuple* type);
   ciInstanceKlass* optimize_instance_klass(ciInstanceKlass* klass, const TypeInterfaces* interfaces);
   ciKlass* klassptr_type_has_no_subklass(const TypeKlassPtr* type);
