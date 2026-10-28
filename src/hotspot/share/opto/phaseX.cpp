@@ -1032,7 +1032,6 @@ void PhaseIterGVN::verify_PhaseIterGVN(bool deep_revisit_converged) {
 void PhaseIterGVN::dump_infinite_loop_info(Node* n, const char* where) {
   n->dump(4);
   _worklist.dump();
-  assert(false, "infinite loop in %s", where);
 }
 
 /**
