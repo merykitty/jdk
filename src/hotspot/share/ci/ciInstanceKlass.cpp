@@ -931,7 +931,7 @@ void ciInstanceKlass::keep_alive(InstanceKlass* ik) {
   // InstanceKlass are created for both weak and strong metadata.  Ensuring this metadata
   // alive covers the cases where there are weak roots without performance cost.
   oop holder = ik->klass_holder();
-  if (ik->class_loader_data()->has_class_mirror_holder()) {
+  if (holder != nullptr) {
     // Though ciInstanceKlass records class loader oop, it's not enough to keep
     // non-strong hidden classes alive (loader == nullptr). Klass holder should
     // be used instead. It is enough to record a ciObject, since cached elements are never removed
@@ -942,7 +942,7 @@ void ciInstanceKlass::keep_alive(InstanceKlass* ik) {
   }
 }
 
-// Whether this ciInstanceKlass has a proper non-interface subklass
+// Whether this ciInstanceKlass has a proper non-interface ciInstanceKlass subklass
 bool ciInstanceKlass::has_subklass() {
   assert(is_loaded(), "must be loaded");
   if (SubklassValue res = _has_subklass; res != subklass_unknown) {

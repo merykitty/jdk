@@ -22,6 +22,7 @@
  *
  */
 
+#include "ci/ciEnv.hpp"
 #include "ci/ciReplay.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "compiler/compilationPolicy.hpp"
@@ -533,8 +534,12 @@ const char* InlineTree::check_can_parse(ciMethod* callee) {
   if ( callee->is_native())                     return "native method";
   if ( callee->is_abstract())                   return "abstract method";
   if (!callee->has_balanced_monitors())         return "not compilable (unbalanced monitors)";
-  if ( callee->get_flow_analysis()->failing())  return "not compilable (flow analysis failed)";
   if (!callee->can_be_parsed())                 return "cannot be parsed";
+
+  // Flow analysis fails (except due to transient errors)
+  if (callee->get_flow_analysis()->failing() && !ciEnv::current()->paradoxical_hierarchy()) {
+    return "not compilable (flow analysis failed)";
+  }
   return nullptr;
 }
 

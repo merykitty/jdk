@@ -24,6 +24,7 @@
 
 #include "asm/macroAssembler.hpp"
 #include "asm/macroAssembler.inline.hpp"
+#include "ci/ciEnv.hpp"
 #include "ci/ciFlatArray.hpp"
 #include "ci/ciReplay.hpp"
 #include "ci/ciValueKlass.hpp"
@@ -852,7 +853,12 @@ Compile::Compile(ciEnv* ci_env, ciMethod* target, int osr_bci,
     gvn.set_type(root(), root()->bottom_type());
 
     JVMState* jvms = build_start_state(start(), tf());
-    if ((jvms = cg->generate(jvms)) == nullptr) {
+    if (jvms = cg->generate(jvms); jvms == nullptr) {
+      // Maybe a transient failure
+      if (ciEnv::current()->paradoxical_hierarchy()) {
+        return;
+      }
+
       assert(failure_reason() != nullptr, "expect reason for parse failure");
       stringStream ss;
       ss.print("method parse failed: %s", failure_reason());
