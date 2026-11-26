@@ -2141,9 +2141,10 @@ bool PhiNode::is_unsafe_data_reference(Node *in) const {
 }
 
 // A Phi may only have other Phis as its transitive outputs, it is dead then. We may not be able to
-// remove it normally because a Phi can be a transitive output of itself.
-bool PhiNode::is_dead_phi() {
-  // Early return before we create the worklist
+// remove it normally because a Phi can be a transitive output of itself. This method pushes all
+// nodes in the dead cycle to the worklist to avoid having to traverse the cycle multiple times.
+bool PhiNode::look_for_dead_phi(Unique_Node_List<Node>& worklist, PhaseIterGVN* kill_helper) {
+  // Early return before we create the visited list
   for (DUIterator_Fast imax, i = fast_outs(imax); i < imax; i++) {
     if (!fast_out(i)->is_Phi()) {
       return false;
@@ -2151,16 +2152,31 @@ bool PhiNode::is_dead_phi() {
   }
 
   ResourceMark rm;
-  Unique_Node_List<const Node> worklist;
-  worklist.push(this);
-  for (uint wl_idx = 0; wl_idx < worklist.size(); wl_idx++) {
-    const Node* n = worklist.at(wl_idx);
+  Unique_Node_List<PhiNode> visited;
+  visited.push(this);
+  for (uint visited_idx = 0; visited_idx < visited.size(); visited_idx++) {
+    const Node* n = visited.at(visited_idx);
     for (DUIterator_Fast imax, i = n->fast_outs(imax); i < imax; i++) {
-      Node* out = n->fast_out(i);
-      if (out->is_Phi()) {
-        worklist.push(out);
+      if (PhiNode* out = n->fast_out(i)->isa_Phi(); out != nullptr) {
+        visited.push(out);
       } else {
         return false;
+      }
+    }
+  }
+
+  for (uint i = 0; i < visited.size(); i++) {
+    worklist.push(visited.at(i));
+  }
+  if (kill_helper != nullptr) {
+    Node* top = kill_helper->C->top();
+    for (uint visited_idx = 0; visited_idx < visited.size(); visited_idx++) {
+      PhiNode* dead = visited.at(visited_idx);
+      kill_helper->rehash_node_delayed(dead);
+      for (uint i = 0; i < dead->req(); i++) {
+        if (dead->in(i) != nullptr) {
+          dead->set_req_X(i, top, kill_helper);
+        }
       }
     }
   }

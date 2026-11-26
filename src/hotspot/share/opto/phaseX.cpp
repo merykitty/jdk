@@ -1049,15 +1049,17 @@ void PhaseIterGVN::trace_PhaseIterGVN_verbose(Node* n, int num_processed) {
 #endif /* ASSERT */
 
 // Whether a node can be killed during IGVN. While transform may kill a node based on its inputs,
-// this can also decide to kill a node based on its outputs.
-bool PhaseIterGVN::can_kill(Node* n) const {
+// this can also decide to kill a node based on its outputs. This may aggressively traverse cycles,
+// so it may disconnect all nodes in a dead cycle so that IGVN does not traverse the same cycle
+// again.
+bool PhaseIterGVN::maybe_kill(Node* n) {
   if (n->is_top()) {
     return false;
   }
   if (n->outcnt() == 0) {
     return true;
   }
-  if (n->is_Phi() && n->as_Phi()->is_dead_phi()) {
+  if (PhiNode* phi = n->isa_Phi(); phi != nullptr && phi->look_for_dead_phi(_worklist, this)) {
     return true;
   }
   return false;
@@ -1117,7 +1119,7 @@ bool PhaseIterGVN::drain_worklist() {
       return true;
     }
     DEBUG_ONLY(trace_PhaseIterGVN_verbose(n, _num_processed++);)
-    if (can_kill(n)) {
+    if (maybe_kill(n)) {
       remove_globally_dead_node(n, NodeOrigin::Graph);
     } else if (!n->is_top()) {
       NOT_PRODUCT(const Type* oldtype = type_or_null(n));
@@ -2251,6 +2253,8 @@ void PhaseIterGVN::remove_globally_dead_node(Node* dead, NodeOrigin origin) {
           if (in == C->top()) {
             continue;
           }
+
+          in->maybe_push_to_worklist_when_disconnect_output(_worklist, dead);
           if (in->outcnt() == 0) {
             // Made input go dead?
             stack.push(in, PROCESS_INPUTS); // Recursively remove
@@ -2270,8 +2274,6 @@ void PhaseIterGVN::remove_globally_dead_node(Node* dead, NodeOrigin origin) {
               }
               assert(!(i < imax), "sanity");
             }
-          } else if (in->should_process_when_disconnect_output(dead)) {
-            _worklist.push(in);
           }
           if (ReduceFieldZeroing && dead->is_Load() && i == MemNode::Memory &&
               in->is_Proj() && Node::is<InitializeNode>(in->in(0))) {
@@ -3858,9 +3860,7 @@ void Node::set_req_X( uint i, Node *n, PhaseIterGVN *igvn ) {
 
   // old goes dead?
   if (old != nullptr) {
-    if (old->should_process_when_disconnect_output(this)) {
-      igvn->_worklist.push(old);
-    }
+    old->maybe_push_to_worklist_when_disconnect_output(igvn->_worklist, this);
 
     switch (old->outcnt()) {
     case 0:

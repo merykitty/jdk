@@ -1348,9 +1348,19 @@ bool Node::has_special_unique_user() const {
   }
 }
 
-bool Node::should_process_when_disconnect_output(Node* output) const {
-  return (is_Phi() && as_Phi()->is_dead_phi()) ||
-         output->is_data_proj_of_pure_function(this);
+void Node::maybe_push_to_worklist_when_disconnect_output(Unique_Node_List<Node>& worklist, Node* output) {
+  if (worklist.member(this)) {
+    return;
+  }
+
+  if (output->is_data_proj_of_pure_function(this)) {
+    worklist.push(this);
+    return;
+  }
+
+  if (PhiNode* phi = isa_Phi(); phi != nullptr) {
+    phi->look_for_dead_phi(worklist, nullptr);
+  }
 }
 
 //--------------------------find_exact_control---------------------------------
@@ -1573,6 +1583,7 @@ static void kill_dead_code( Node *dead, PhaseIterGVN *igvn ) {
         Node *n = dead->in(i);      // Get input to dead guy
         if (n != nullptr && !n->is_top()) { // Input is valid?
           dead->set_req(i, top);    // Smash input away
+          n->maybe_push_to_worklist_when_disconnect_output(igvn->_worklist, dead);
           if (n->outcnt() == 0) {   // Input also goes dead?
             if (!n->is_Con())
               nstack.push(n);       // Clear it out as well
@@ -1584,8 +1595,6 @@ static void kill_dead_code( Node *dead, PhaseIterGVN *igvn ) {
             // The restriction (outcnt() <= 2) is the same as in set_req_X()
             // and remove_globally_dead_node().
             igvn->add_users_to_worklist( n );
-          } else if (n->should_process_when_disconnect_output(dead)) {
-            igvn->_worklist.push(n);
           }
         }
       }

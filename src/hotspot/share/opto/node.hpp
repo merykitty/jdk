@@ -1342,7 +1342,7 @@ public:
   bool has_special_unique_user() const;
 
   // Some nodes can be processed when one of its outputs is disconnected
-  bool should_process_when_disconnect_output(Node* output) const;
+  void maybe_push_to_worklist_when_disconnect_output(Unique_Node_List<Node>& worklist, Node* output);
 
 private:
   bool is_data_proj_of_pure_function(const Node* maybe_pure_function) const;

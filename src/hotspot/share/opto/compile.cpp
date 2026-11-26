@@ -461,9 +461,7 @@ void Compile::disconnect_useless_nodes(Unique_Node_List<Node>& useful, Unique_No
         n->raw_del_out(j);
         --j;
         --max;
-        if (n->should_process_when_disconnect_output(child)) {
-          worklist.push(n);
-        }
+        n->maybe_push_to_worklist_when_disconnect_output(worklist, child);
       }
     }
     if (n->outcnt() == 1 && n->has_special_unique_user()) {
